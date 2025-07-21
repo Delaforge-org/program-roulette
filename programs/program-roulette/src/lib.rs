@@ -1,11 +1,12 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{ self, Token, Transfer, Mint, TokenAccount };
 use anchor_lang::solana_program::pubkey::Pubkey;
-use anchor_lang::solana_program::{ system_instruction, program::invoke, hash };
+use anchor_lang::solana_program::hash;
+use anchor_lang::system_program;
 
-declare_id!("RoTy4VytedmLQKmsynLoSMsmsZ5g57Yet8yj5N87ecp");
+declare_id!("2jhCo7T2cEhpGSiCTuNmkJrkvkANjDv5Mzwnig8E9fLc");
 
-const TREASURY_PUBKEY: Pubkey = pubkey!("DDx7B6zkNhseqcp8Ym5JnP6YyRtMJ19cAML7EtfNz3CX");
+const TREASURY_PUBKEY: Pubkey = pubkey!("DRqMriKY4X3ggiFdx27Fotu5HebQFyRZhNasWFTzaQ78");
 const CREATE_VAULT_FEE_SOL_LAMPORTS: u64 = 637_000_000;
 
 /// Represents a single instance of liquidity provided by a user.
@@ -72,7 +73,8 @@ pub struct Bet {
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
 pub struct ProviderReward {
     pub provider: Pubkey,
-    pub accumulated_reward: u64,
+    pub unclaimed_rewards: u64,
+    pub reward_per_share_index_last_claimed: u128,
 }
 
 /// Defines the possible states of a roulette game round.
@@ -494,6 +496,8 @@ pub struct ClaimMyWinnings<'info> {
 const PROVIDER_DIVISOR: u64 = 91;
 /// Divisor for calculating program owner revenue (~1.6%).
 const OWNER_DIVISOR: u64 = 62;
+/// Precision for calculating provider rewards index.
+const REWARD_PRECISION: u128 = 1_000_000_000_000;
 /// Minimum duration (in seconds) a round must be open for betting.
 const MIN_ROUND_DURATION: i64 = 180; // 3 minutes
 const MIN_BETS_CLOSED_DURATION: i64 = 15; // 15 seconds
@@ -506,6 +510,7 @@ pub const BET_TYPE_SPLIT: u8 = 1;
 /// Maximum valid numerical value for a bet type enum.
 pub const BET_TYPE_MAX: u8 = 15;
 
+#[allow(deprecated)]
 #[program]
 pub mod roulette_game {
     use super::*;
@@ -540,18 +545,15 @@ pub mod roulette_game {
         );
 
         // SOL fee transfer
-        let transfer_instruction = system_instruction::transfer(
-            &ctx.accounts.authority.key(),
-            &TREASURY_PUBKEY,
-            CREATE_VAULT_FEE_SOL_LAMPORTS
-        );
-        invoke(
-            &transfer_instruction,
-            &[
-                ctx.accounts.authority.to_account_info(),
-                ctx.accounts.treasury_account.to_account_info(),
+        system_program::transfer(
+            CpiContext::new(
                 ctx.accounts.system_program.to_account_info(),
-            ]
+                system_program::Transfer {
+                    from: ctx.accounts.authority.to_account_info(),
+                    to: ctx.accounts.treasury_account.to_account_info(),
+                },
+            ),
+            CREATE_VAULT_FEE_SOL_LAMPORTS
         )?;
 
         // Initialize vault state
@@ -559,10 +561,12 @@ pub mod roulette_game {
         vault.token_mint = ctx.accounts.token_mint.key();
         vault.token_account = ctx.accounts.vault_token_account.key();
         vault.total_liquidity = 0;
+        vault.total_provider_capital = 0;
         vault.bump = expected_bump;
         vault.liquidity_pool = Vec::new();
         vault.provider_rewards = Vec::new();
         vault.owner_reward = 0;
+        vault.reward_per_share_index = 0;
 
         Ok(())
     }
@@ -575,6 +579,52 @@ pub mod roulette_game {
             RouletteError::InvalidTokenAccount
         );
 
+        let vault = &mut ctx.accounts.vault;
+        let provider_key = ctx.accounts.liquidity_provider.key();
+        let current_reward_index = vault.reward_per_share_index;
+
+        // --- Start of reward update logic ---
+        let mut provider_liquidity: u64 = 0;
+        for provision in &vault.liquidity_pool {
+            if provision.provider == provider_key && !provision.withdrawn {
+                provider_liquidity = provider_liquidity
+                    .checked_add(provision.amount)
+                    .ok_or(RouletteError::ArithmeticOverflow)?;
+            }
+        }
+
+        let reward_entry_index = vault.provider_rewards.iter().position(|r| r.provider == provider_key);
+
+        if let Some(index) = reward_entry_index {
+            let last_claimed_index = vault.provider_rewards[index].reward_per_share_index_last_claimed;
+            let index_delta = current_reward_index
+                .checked_sub(last_claimed_index)
+                .ok_or(RouletteError::ArithmeticOverflow)?;
+
+            let mut newly_earned_reward: u64 = 0;
+            if index_delta > 0 && provider_liquidity > 0 {
+                let reward_u128 = index_delta
+                    .checked_mul(provider_liquidity as u128)
+                    .ok_or(RouletteError::ArithmeticOverflow)?
+                    .checked_div(REWARD_PRECISION)
+                    .ok_or(RouletteError::ArithmeticOverflow)?;
+                newly_earned_reward = reward_u128.try_into().map_err(|_| RouletteError::ArithmeticOverflow)?;
+            }
+
+            let reward = &mut vault.provider_rewards[index];
+            reward.unclaimed_rewards = reward.unclaimed_rewards
+                .checked_add(newly_earned_reward)
+                .ok_or(RouletteError::ArithmeticOverflow)?;
+            reward.reward_per_share_index_last_claimed = current_reward_index;
+        } else {
+            vault.provider_rewards.push(ProviderReward {
+                provider: provider_key,
+                unclaimed_rewards: 0,
+                reward_per_share_index_last_claimed: current_reward_index,
+            });
+        }
+        // --- End of reward update logic ---
+
         // Manual deserialization and validation of token accounts
         let provider_token = TokenAccount::try_deserialize(
             &mut &ctx.accounts.provider_token_account.data.borrow()[..]
@@ -582,8 +632,6 @@ pub mod roulette_game {
         let vault_token = TokenAccount::try_deserialize(
             &mut &ctx.accounts.vault_token_account.data.borrow()[..]
         )?;
-        let vault = &mut ctx.accounts.vault;
-        let provider = &ctx.accounts.liquidity_provider;
         require_eq!(provider_token.mint, vault.token_mint, RouletteError::InvalidTokenAccount);
         require_eq!(vault_token.mint, vault.token_mint, RouletteError::InvalidTokenAccount);
 
@@ -592,7 +640,7 @@ pub mod roulette_game {
             CpiContext::new(ctx.accounts.token_program.to_account_info(), Transfer {
                 from: ctx.accounts.provider_token_account.to_account_info(),
                 to: ctx.accounts.vault_token_account.to_account_info(),
-                authority: provider.to_account_info(),
+                authority: ctx.accounts.liquidity_provider.to_account_info(),
             }),
             amount
         )?;
@@ -602,14 +650,9 @@ pub mod roulette_game {
             .checked_add(amount)
             .ok_or(RouletteError::ArithmeticOverflow)?;
 
-        let provider_key = *provider.key;
-        // Initialize provider reward entry if not exists
-        if !vault.provider_rewards.iter().any(|r| r.provider == provider_key) {
-            vault.provider_rewards.push(ProviderReward {
-                provider: provider_key,
-                accumulated_reward: 0,
-            });
-        }
+        vault.total_provider_capital = vault.total_provider_capital
+            .checked_add(amount)
+            .ok_or(RouletteError::ArithmeticOverflow)?;
 
         // Record the liquidity provision
         vault.liquidity_pool.push(LiquidityProvision {
@@ -638,17 +681,44 @@ pub mod roulette_game {
         );
 
         let vault = &mut ctx.accounts.vault;
-        let provider = &ctx.accounts.liquidity_provider;
+        let provider_key = ctx.accounts.liquidity_provider.key();
+        let current_reward_index = vault.reward_per_share_index;
 
         // Calculate total available liquidity for the provider
         let mut available_for_withdrawal: u64 = 0;
         for provision in &vault.liquidity_pool {
-            if provision.provider == *provider.key && !provision.withdrawn {
+            if provision.provider == provider_key && !provision.withdrawn {
                 available_for_withdrawal = available_for_withdrawal
                     .checked_add(provision.amount)
                     .ok_or(RouletteError::ArithmeticOverflow)?;
             }
         }
+
+        // --- Start of reward update logic ---
+        let reward_entry_index = vault.provider_rewards.iter().position(|r| r.provider == provider_key);
+        if let Some(index) = reward_entry_index {
+            let last_claimed_index = vault.provider_rewards[index].reward_per_share_index_last_claimed;
+            let index_delta = current_reward_index
+                .checked_sub(last_claimed_index)
+                .ok_or(RouletteError::ArithmeticOverflow)?;
+
+            let mut newly_earned_reward: u64 = 0;
+            if index_delta > 0 && available_for_withdrawal > 0 {
+                let reward_u128 = index_delta
+                    .checked_mul(available_for_withdrawal as u128)
+                    .ok_or(RouletteError::ArithmeticOverflow)?
+                    .checked_div(REWARD_PRECISION)
+                    .ok_or(RouletteError::ArithmeticOverflow)?;
+                newly_earned_reward = reward_u128.try_into().map_err(|_| RouletteError::ArithmeticOverflow)?;
+            }
+
+            let reward = &mut vault.provider_rewards[index];
+            reward.unclaimed_rewards = reward.unclaimed_rewards
+                .checked_add(newly_earned_reward)
+                .ok_or(RouletteError::ArithmeticOverflow)?;
+            reward.reward_per_share_index_last_claimed = current_reward_index;
+        }
+        // --- End of reward update logic ---
 
         // Require exact withdrawal amount
         require!(available_for_withdrawal == amount, RouletteError::MustWithdrawExactAmount);
@@ -675,15 +745,19 @@ pub mod roulette_game {
             .checked_sub(amount)
             .ok_or(RouletteError::ArithmeticOverflow)?;
 
+        vault.total_provider_capital = vault.total_provider_capital
+            .checked_sub(amount)
+            .ok_or(RouletteError::ArithmeticOverflow)?;
+
         // Mark provisions as withdrawn
         for provision in &mut vault.liquidity_pool {
-            if provision.provider == *provider.key && !provision.withdrawn {
+            if provision.provider == provider_key && !provision.withdrawn {
                 provision.withdrawn = true;
             }
         }
 
         emit!(LiquidityWithdrawn {
-            provider: *provider.key,
+            provider: provider_key,
             token_mint: vault.token_mint,
             amount,
             timestamp: Clock::get()?.unix_timestamp,
@@ -701,24 +775,69 @@ pub mod roulette_game {
         );
 
         let vault = &mut ctx.accounts.vault;
-        let provider = &ctx.accounts.liquidity_provider;
+        let provider_key = ctx.accounts.liquidity_provider.key();
+        let current_reward_index = vault.reward_per_share_index;
 
-        // Find provider's reward
-        let mut reward_amount: u64 = 0;
-        let mut reward_index: Option<usize> = None;
-        for (i, reward) in vault.provider_rewards.iter().enumerate() {
-            if reward.provider == *provider.key {
-                reward_amount = reward.accumulated_reward;
-                reward_index = Some(i);
-                break;
+        // --- Start of reward calculation ---
+        let mut provider_liquidity: u64 = 0;
+        for provision in &vault.liquidity_pool {
+            if provision.provider == provider_key && !provision.withdrawn {
+                provider_liquidity = provider_liquidity
+                    .checked_add(provision.amount)
+                    .ok_or(RouletteError::ArithmeticOverflow)?;
             }
         }
 
-        require!(reward_amount > 0, RouletteError::NoReward);
-        require!(vault.total_liquidity >= reward_amount, RouletteError::InsufficientLiquidity);
+        let reward_entry_index = vault.provider_rewards.iter().position(|r| r.provider == provider_key);
+        if reward_entry_index.is_none() {
+            return err!(RouletteError::NoReward);
+        }
+        let index = reward_entry_index.unwrap();
 
-        // Transfer reward
-        let seeds = &[b"vault".as_ref(), vault.token_mint.as_ref(), &[vault.bump]];
+        let last_claimed_index = vault.provider_rewards[index].reward_per_share_index_last_claimed;
+        let index_delta = current_reward_index
+            .checked_sub(last_claimed_index)
+            .ok_or(RouletteError::ArithmeticOverflow)?;
+        
+        let mut newly_earned_reward: u64 = 0;
+        if index_delta > 0 && provider_liquidity > 0 {
+            let reward_u128 = index_delta
+                .checked_mul(provider_liquidity as u128)
+                .ok_or(RouletteError::ArithmeticOverflow)?
+                .checked_div(REWARD_PRECISION)
+                .ok_or(RouletteError::ArithmeticOverflow)?;
+            newly_earned_reward = reward_u128.try_into().map_err(|_| RouletteError::ArithmeticOverflow)?;
+        }
+        
+        let total_rewards_to_claim;
+        let vault_total_liquidity;
+        let vault_token_mint;
+        let vault_bump;
+
+        // Scoped mutable borrow
+        {
+            let reward = &mut vault.provider_rewards[index];
+            reward.unclaimed_rewards = reward.unclaimed_rewards
+                .checked_add(newly_earned_reward)
+                .ok_or(RouletteError::ArithmeticOverflow)?;
+            reward.reward_per_share_index_last_claimed = current_reward_index;
+            total_rewards_to_claim = reward.unclaimed_rewards;
+        }
+
+        require!(total_rewards_to_claim > 0, RouletteError::NoReward);
+        require!(
+            vault.total_liquidity >= total_rewards_to_claim,
+            RouletteError::InsufficientLiquidity
+        );
+        
+        // --- End of reward calculation ---
+        
+        // --- Start of transfer ---
+        vault_total_liquidity = vault.total_liquidity;
+        vault_token_mint = vault.token_mint;
+        vault_bump = vault.bump;
+
+        let seeds = &[b"vault".as_ref(), vault_token_mint.as_ref(), &[vault_bump]];
         let signer_seeds = &[&seeds[..]];
         token::transfer(
             CpiContext::new_with_signer(
@@ -730,14 +849,25 @@ pub mod roulette_game {
                 },
                 signer_seeds
             ),
-            reward_amount
+            total_rewards_to_claim
         )?;
+        // --- End of transfer ---
 
-        // Update vault state
-        vault.total_liquidity = vault.total_liquidity
-            .checked_sub(reward_amount)
+        // --- Start of final state update ---
+        vault.total_liquidity = vault_total_liquidity
+            .checked_sub(total_rewards_to_claim)
             .ok_or(RouletteError::ArithmeticOverflow)?;
-        vault.provider_rewards[reward_index.ok_or(RouletteError::NoReward)?].accumulated_reward = 0;
+        
+        let reward = &mut vault.provider_rewards[index];
+        reward.unclaimed_rewards = 0;
+        // --- End of final state update ---
+
+        emit!(ProviderRevenueWithdrawn {
+            provider: provider_key,
+            token_mint: vault.token_mint,
+            amount: total_rewards_to_claim,
+            timestamp: Clock::get()?.unix_timestamp,
+        });
 
         Ok(())
     }
@@ -818,18 +948,15 @@ pub mod roulette_game {
         );
         require_eq!(_vault_token_account.mint, mint_info.key(), RouletteError::InvalidTokenAccount);
 
-        let transfer_instruction = system_instruction::transfer(
-            &ctx.accounts.authority.key(),
-            &TREASURY_PUBKEY,
-            CREATE_VAULT_FEE_SOL_LAMPORTS
-        );
-        invoke(
-            &transfer_instruction,
-            &[
-                ctx.accounts.authority.to_account_info(),
-                ctx.accounts.treasury_account.to_account_info(),
+        system_program::transfer(
+            CpiContext::new(
                 ctx.accounts.system_program.to_account_info(),
-            ]
+                system_program::Transfer {
+                    from: ctx.accounts.authority.to_account_info(),
+                    to: ctx.accounts.treasury_account.to_account_info(),
+                },
+            ),
+            CREATE_VAULT_FEE_SOL_LAMPORTS
         )?;
 
         // Initialize vault state
@@ -837,13 +964,16 @@ pub mod roulette_game {
         vault.token_mint = ctx.accounts.token_mint.key();
         vault.token_account = ctx.accounts.vault_token_account.key();
         vault.total_liquidity = 0;
+        vault.total_provider_capital = 0;
         vault.bump = ctx.bumps.vault;
         vault.liquidity_pool = Vec::new();
         vault.provider_rewards = Vec::new();
         vault.owner_reward = 0;
+        vault.reward_per_share_index = 0;
         vault.provider_rewards.push(ProviderReward {
             provider: *ctx.accounts.liquidity_provider.key,
-            accumulated_reward: 0,
+            unclaimed_rewards: 0,
+            reward_per_share_index_last_claimed: 0,
         });
 
         // Transfer initial liquidity
@@ -858,6 +988,7 @@ pub mod roulette_game {
 
         // Update vault state
         vault.total_liquidity = amount;
+        vault.total_provider_capital = amount;
         vault.liquidity_pool.push(LiquidityProvision {
             provider: *ctx.accounts.liquidity_provider.key,
             amount,
@@ -1009,61 +1140,17 @@ pub mod roulette_game {
             .checked_add(owner_revenue)
             .ok_or(RouletteError::ArithmeticOverflow)?;
 
-        // Calculate provider shares based on active liquidity
-        let mut total_active_liquidity: u128 = 0;
-        let mut provider_liquidity_map: Vec<(Pubkey, u64)> = Vec::new();
-        for provision in &vault.liquidity_pool {
-            if !provision.withdrawn {
-                let amount_u128 = provision.amount as u128;
-                total_active_liquidity = total_active_liquidity
-                    .checked_add(amount_u128)
-                    .ok_or(RouletteError::ArithmeticOverflow)?;
-
-                if
-                    let Some(entry) = provider_liquidity_map
-                        .iter_mut()
-                        .find(|(key, _)| *key == provision.provider)
-                {
-                    entry.1 = entry.1
-                        .checked_add(provision.amount)
-                        .ok_or(RouletteError::ArithmeticOverflow)?;
-                } else {
-                    provider_liquidity_map.push((provision.provider, provision.amount));
-                }
-            }
-        }
-
-        // Distribute provider revenue proportionally
-        if total_active_liquidity > 0 {
-            for (provider_key, liquidity_amount) in provider_liquidity_map {
-                let provider_share_u128: u128 = (provider_revenue as u128)
-                    .checked_mul(liquidity_amount as u128)
-                    .ok_or(RouletteError::ArithmeticOverflow)?
-                    .checked_div(total_active_liquidity)
-                    .ok_or(RouletteError::ArithmeticOverflow)?;
-
-                let provider_share: u64 = provider_share_u128
-                    .try_into()
-                    .map_err(|_| RouletteError::ArithmeticOverflow)?;
-
-                // Update or initialize provider reward entry
-                let mut found = false;
-                for reward in &mut vault.provider_rewards {
-                    if reward.provider == provider_key {
-                        reward.accumulated_reward = reward.accumulated_reward
-                            .checked_add(provider_share)
-                            .ok_or(RouletteError::ArithmeticOverflow)?;
-                        found = true;
-                        break;
-                    }
-                }
-                if !found {
-                    vault.provider_rewards.push(ProviderReward {
-                        provider: provider_key,
-                        accumulated_reward: provider_share,
-                    });
-                }
-            }
+        // Update reward index
+        if vault.total_provider_capital > 0 {
+            let provider_revenue_u128 = provider_revenue as u128;
+            let increment = provider_revenue_u128
+                .checked_mul(REWARD_PRECISION)
+                .ok_or(RouletteError::ArithmeticOverflow)?
+                .checked_div(vault.total_provider_capital as u128)
+                .ok_or(RouletteError::ArithmeticOverflow)?;
+            vault.reward_per_share_index = vault.reward_per_share_index
+                .checked_add(increment)
+                .ok_or(RouletteError::ArithmeticOverflow)?;
         }
 
         // Add bet to player's account
@@ -1141,6 +1228,13 @@ pub mod roulette_game {
         let hash_bytes = hash_result_obj.to_bytes();
         let hash_prefix_u64 = u64::from_le_bytes(hash_bytes[0..8].try_into().unwrap());
         let winning_number = (hash_prefix_u64 % 37) as u8; // Modulo 37 for 0-36
+
+        msg!(
+            "Round {} | Hash {:?} | Winning Number {}",
+            game_session.current_round,
+            hash_bytes,
+            winning_number
+        );
 
         // Update game session
         game_session.winning_number = Some(winning_number);
@@ -1378,10 +1472,12 @@ pub struct VaultAccount {
     pub token_mint: Pubkey,
     pub token_account: Pubkey,
     pub total_liquidity: u64,
+    pub total_provider_capital: u64,
     pub bump: u8,
     pub liquidity_pool: Vec<LiquidityProvision>,
     pub provider_rewards: Vec<ProviderReward>,
     pub owner_reward: u64,
+    pub reward_per_share_index: u128,
 }
 
 #[account]
@@ -1476,6 +1572,14 @@ pub struct BetPlaced {
     pub timestamp: i64,
 }
 
+#[event]
+pub struct ProviderRevenueWithdrawn {
+    pub provider: Pubkey,
+    pub token_mint: Pubkey,
+    pub amount: u64,
+    pub timestamp: i64,
+}
+
 #[error_code]
 pub enum RouletteError {
     #[msg("Arithmetic overflow error during calculation.")]
@@ -1544,4 +1648,6 @@ pub enum RouletteError {
     TreasuryAccountMintMismatch,
     #[msg("Player bets are from a different round than the one being claimed.")]
     BetsRoundMismatch,
+    #[msg("Maximum number of liquidity providers for this vault has been reached.")]
+    ProviderLimitReached,
 }
