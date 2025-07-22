@@ -2,13 +2,20 @@
 
 This is a smart contract for a decentralized roulette game on the Solana blockchain, developed using the Anchor framework. The project allows users to bet on the outcome of a roulette spin using various SPL tokens and also enables other users to become liquidity providers and earn income from the gameplay.
 
+## 📐 Architecture Diagram
+
+A visual representation of the contract's architecture and account interactions can be found on our Miro board:
+
+[View Architecture Diagram on Miro](https://miro.com/app/board/uXjVJbyCEN8=/?share_link_id=978905070684)
+
 ## ⚙️ Core Concepts
 
-### 1. Liquidity Vaults
+### 1. Liquidity Management Architecture
 
--   Each SPL token used in the game has its own vault (`VaultAccount`).
--   Users (liquidity providers) can deposit their tokens into these vaults to provide liquidity for paying out winnings.
--   In return for providing liquidity, they receive a share of the players' losses.
+The contract uses a scalable, two-tier account system for managing liquidity, ensuring it can support a large number of providers without running into memory limitations.
+
+-   **Global Vault (`VaultAccount`)**: Each SPL token used in the game has its own global vault. This account holds the total pooled liquidity and tracks global reward calculation parameters. It does **not** store individual provider data.
+-   **Provider-Specific State (`ProviderState`)**: For each user providing liquidity to a vault, a separate, dedicated `ProviderState` account is created. This account tracks that specific user's capital contribution and their unclaimed rewards. The user pays the rent for their own state account and is refunded when they fully withdraw, making the system horizontally scalable.
 
 ### 2. Gameplay
 
@@ -21,7 +28,7 @@ This is a smart contract for a decentralized roulette game on the Solana blockch
 
 ### 3. Revenue Distribution
 
--   The contract automatically takes a commission from each winning payout.
+-   The contract automatically takes a commission from each bet.
 -   This commission is distributed between:
     -   **Liquidity Providers**: as a reward for the funds provided.
     -   **Program Owner**: as income from the use of the contract.
@@ -31,14 +38,15 @@ This is a smart contract for a decentralized roulette game on the Solana blockch
 The winning number (from 0 to 36) is determined randomly on the blockchain. The generation mechanism is as follows:
 
 1.  After bets are closed for a round, the `get_random` instruction is called.
-2.  The contract takes the **current slot number** (`slot`) and the **public key of the last player who placed a bet** (`last_bettor`).
-3.  These two values are hashed using `sha256`.
+2.  The contract takes the **current slot number** (`slot`), the **timestamp**, and the **public key of the last player who placed a bet** (`last_bettor`).
+3.  These values are hashed together using `sha256`.
 4.  Based on the resulting hash, a number in the range of 0 to 36 is calculated.
 
 
 ## 🗂️ Key Accounts
 
--   `VaultAccount`: Stores liquidity for a specific SPL token, information about providers, and their rewards.
+-   `VaultAccount`: Stores global data for a liquidity pool of a specific SPL token, such as total liquidity and reward calculation indexes.
+-   `ProviderState`: A dedicated account for each liquidity provider within a specific vault. It tracks the amount of capital provided by that user and their unclaimed rewards. It's created on the first deposit and closed on full withdrawal.
 -   `GameSession`: A global account that manages the state and lifecycle of game rounds.
 -   `PlayerBets`: An account created for each player to store their bets for the current round.
 
@@ -46,11 +54,10 @@ The winning number (from 0 to 36) is determined randomly on the blockchain. The 
 
 ### Vault and Liquidity Management
 
--   `initialize_vault`: Creates a new vault for an SPL token.
--   `provide_liquidity`: Allows a user to deposit tokens into a vault.
--   `withdraw_liquidity`: Allows a user to withdraw their tokens from a vault.
--   `initialize_and_provide_liquidity`: Combines vault creation and initial liquidity provision.
--   `withdraw_provider_revenue`: Allows a liquidity provider to claim their earned rewards.
+-   `initialize_and_provide_liquidity`: Creates a new vault and provides initial liquidity, creating both the `VaultAccount` and the first `ProviderState` account in a single transaction.
+-   `provide_liquidity`: Allows a user to deposit tokens into a vault. Creates a personal `ProviderState` account for the user on their first deposit.
+-   `withdraw_liquidity`: Allows a user to withdraw their **entire** provided capital and all accumulated rewards. This action closes the user's `ProviderState` account and refunds the associated rent.
+-   `withdraw_provider_revenue`: Allows a liquidity provider to claim only their earned rewards without withdrawing their capital.
 -   `withdraw_owner_revenue`: Allows the program owner to claim their share of the revenue.
 
 ### Gameplay
@@ -89,7 +96,3 @@ anchor test
 ```bash
 anchor deploy
 ```
-
-## ⚠️ Disclaimer
-
-This project is intended for educational and demonstration purposes.
