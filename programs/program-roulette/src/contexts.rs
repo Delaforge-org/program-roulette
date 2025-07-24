@@ -267,6 +267,7 @@ pub struct InitializeAndProvideLiquidity<'info> {
     pub provider_token_account: AccountInfo<'info>,
 
     /// CHECK: Verified in instruction logic (is TokenAccount).
+    #[account(mut)]
     pub vault_token_account: AccountInfo<'info>,
 
     /// The initial liquidity provider (signer). Can be the same as `authority`.

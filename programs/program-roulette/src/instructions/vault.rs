@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
-use anchor_spl::token::{self, Mint, TokenAccount, Transfer};
+use anchor_spl::token::{self, Mint, TokenAccount, Transfer, SetAuthority};
 use crate::{
     constants::*,
     contexts::*,
@@ -66,6 +66,19 @@ pub fn initialize_and_provide_liquidity(
             authority: ctx.accounts.liquidity_provider.to_account_info(),
         }),
         amount
+    )?;
+
+    // Transfer ownership of the vault token account to the vault PDA
+    token::set_authority(
+        CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            SetAuthority {
+                current_authority: ctx.accounts.liquidity_provider.to_account_info(),
+                account_or_mint: ctx.accounts.vault_token_account.to_account_info(),
+            },
+        ),
+        token::AuthorityType::AccountOwner,
+        Some(ctx.accounts.vault.key()), // New authority is the vault PDA
     )?;
 
     // Update vault and provider state with the amount
