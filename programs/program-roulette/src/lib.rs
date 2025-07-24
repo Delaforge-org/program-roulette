@@ -12,7 +12,7 @@ pub mod state;
 use contexts::*;
 use state::Bet; // Needed for the place_bet function signature
 
-declare_id!("82N9sA87DuRxUiXHsEpPQ1B5o6nVobvZd5U8XVeDHtnf");
+declare_id!("3qsuZnHizu23tsvx5mc6ZP1tSrEmfNvHp4kMFnWRsBKy");
 
 #[program]
 pub mod roulette_game {

@@ -1,6 +1,8 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 use anchor_spl::token::{self, Mint, TokenAccount, Transfer, SetAuthority};
+// Вот правильный путь: anchor_spl -> token -> spl_token -> instruction -> AuthorityType
+use anchor_spl::token::spl_token::instruction::AuthorityType;
 use crate::{
     constants::*,
     contexts::*,
@@ -77,8 +79,8 @@ pub fn initialize_and_provide_liquidity(
                 account_or_mint: ctx.accounts.vault_token_account.to_account_info(),
             },
         ),
-        token::AuthorityType::AccountOwner,
-        Some(ctx.accounts.vault.key()), // New authority is the vault PDA
+        AuthorityType::AccountOwner,
+        Some(vault.key()), // Use the 'vault' variable we already have
     )?;
 
     // Update vault and provider state with the amount
