@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 
 pub const TREASURY_PUBKEY: Pubkey = pubkey!("DRqMriKY4X3ggiFdx27Fotu5HebQFyRZhNasWFTzaQ78");
-pub const CREATE_VAULT_FEE_SOL_LAMPORTS: u64 = 637_000_000;
+pub const CREATE_VAULT_FEE_SOL_LAMPORTS: u64 = 737_000_000;
 
 
 pub const MAX_BETS_PER_ROUND: usize = 10; // Example limit for space calculation

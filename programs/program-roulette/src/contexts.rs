@@ -270,9 +270,11 @@ pub struct InitializeAndProvideLiquidity<'info> {
     #[account(mut)]
     pub vault_token_account: AccountInfo<'info>,
 
-    /// The initial liquidity provider (signer). Can be the same as `authority`.
+    /// CHECK: This is the initial liquidity provider. We check in the instruction
+    /// that this public key matches the one used to derive the provider_state PDA.
+    /// The `authority` signer will sign for any token operations.
     #[account(mut)]
-    pub liquidity_provider: Signer<'info>,
+    pub liquidity_provider: AccountInfo<'info>,
 
     /// CHECK: Address checked in instruction logic, used for SOL transfer. Must be writable.
     #[account(
@@ -321,7 +323,7 @@ pub struct PlaceBets<'info> {
     /// CHECK: Validated in instruction logic (is TokenAccount). Constraint ensures it matches `vault.token_account`.
     #[account(
         mut,
-        constraint = vault_token_account.key() == vault.token_account,
+        constraint = vault_token_account.key() == vault.token_account @ RouletteError::InvalidTokenAccount,
     )]
     pub vault_token_account: AccountInfo<'info>,
 
