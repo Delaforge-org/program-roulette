@@ -51,6 +51,20 @@ pub fn place_bet(ctx: Context<PlaceBets>, bet: Bet) -> Result<()> {
     );
     require!(bet.bet_type <= BET_TYPE_MAX, RouletteError::InvalidBet);
 
+    // Check that the bet amount does not exceed 3% of the vault's total liquidity.
+    let max_bet_amount = (vault.total_liquidity as u128)
+        .checked_mul(MAX_BET_PERCENTAGE as u128)
+        .ok_or(RouletteError::ArithmeticOverflow)?
+        .checked_div(MAX_BET_PERCENTAGE_DIVISOR as u128)
+        .ok_or(RouletteError::ArithmeticOverflow)? as u64;
+
+    // A max_bet_amount of 0 means the vault is empty or has very little liquidity.
+    // In this case, no bets should be allowed. We also check bet.amount > 0 later.
+    require!(
+        bet.amount <= max_bet_amount,
+        RouletteError::BetAmountExceedsLimit
+    );
+
     // Handle first bet in round / round switch
     if player_bets.round != game_session.current_round {
         player_bets.bets.clear(); // Clear previous round's bets

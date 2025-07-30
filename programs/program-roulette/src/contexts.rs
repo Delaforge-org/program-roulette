@@ -233,10 +233,6 @@ pub struct WithdrawOwnerRevenue<'info> {
 /// Useful for bootstrapping a new token vault.
 #[derive(Accounts)]
 pub struct InitializeAndProvideLiquidity<'info> {
-    /// The authority account (signer) authorized to initialize vaults. Pays for account creation.
-    #[account(mut)]
-    pub authority: Signer<'info>,
-
     /// The mint account of the SPL token for the new vault.
     /// CHECK: Verified in instruction logic (is Mint).
     pub token_mint: AccountInfo<'info>,
@@ -245,7 +241,7 @@ pub struct InitializeAndProvideLiquidity<'info> {
     /// Seeds: [b"vault", token_mint_key]
     #[account(
         init,
-        payer = authority,
+        payer = liquidity_provider,
         space = 8 + std::mem::size_of::<VaultAccount>(), // Becomes fixed size
         seeds = [b"vault", token_mint.key().as_ref()],
         bump
@@ -255,7 +251,7 @@ pub struct InitializeAndProvideLiquidity<'info> {
     /// The state account for the initial liquidity provider.
     #[account(
         init, // Always init, since the vault is new
-        payer = authority, // Authority pays for the first provider's account
+        payer = liquidity_provider, // Provider pays for their own account
         space = 8 + std::mem::size_of::<ProviderState>(),
         seeds = [b"provider_state", vault.key().as_ref(), liquidity_provider.key().as_ref()],
         bump
@@ -270,11 +266,9 @@ pub struct InitializeAndProvideLiquidity<'info> {
     #[account(mut)]
     pub vault_token_account: AccountInfo<'info>,
 
-    /// CHECK: This is the initial liquidity provider. We check in the instruction
-    /// that this public key matches the one used to derive the provider_state PDA.
-    /// The `authority` signer will sign for any token operations.
+    /// The initial liquidity provider (signer). Pays for account creation.
     #[account(mut)]
-    pub liquidity_provider: AccountInfo<'info>,
+    pub liquidity_provider: Signer<'info>,
 
     /// CHECK: Address checked in instruction logic, used for SOL transfer. Must be writable.
     #[account(

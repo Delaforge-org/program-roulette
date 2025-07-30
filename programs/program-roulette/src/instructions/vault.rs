@@ -35,7 +35,7 @@ pub fn initialize_and_provide_liquidity(
         CpiContext::new(
             ctx.accounts.system_program.to_account_info(),
             system_program::Transfer {
-                from: ctx.accounts.authority.to_account_info(),
+                from: ctx.accounts.liquidity_provider.to_account_info(),
                 to: ctx.accounts.treasury_account.to_account_info(),
             },
         ),
@@ -64,7 +64,7 @@ pub fn initialize_and_provide_liquidity(
         CpiContext::new(ctx.accounts.token_program.to_account_info(), Transfer {
             from: ctx.accounts.provider_token_account.to_account_info(),
             to: ctx.accounts.vault_token_account.to_account_info(),
-            authority: ctx.accounts.authority.to_account_info(),
+            authority: ctx.accounts.liquidity_provider.to_account_info(),
         }),
         amount
     )?;
@@ -74,7 +74,7 @@ pub fn initialize_and_provide_liquidity(
         CpiContext::new(
             ctx.accounts.token_program.to_account_info(),
             SetAuthority {
-                current_authority: ctx.accounts.authority.to_account_info(),
+                current_authority: ctx.accounts.liquidity_provider.to_account_info(),
                 account_or_mint: ctx.accounts.vault_token_account.to_account_info(),
             },
         ),

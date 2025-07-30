@@ -14,6 +14,11 @@ pub const OWNER_DIVISOR: u64 = 62;
 /// Precision for calculating provider rewards index.
 pub const REWARD_PRECISION: u128 = 1_000_000_000_000;
 
+/// Maximum bet allowed as a percentage of the vault's total liquidity.
+pub const MAX_BET_PERCENTAGE: u64 = 3;
+/// Divisor for calculating the maximum bet percentage.
+pub const MAX_BET_PERCENTAGE_DIVISOR: u64 = 100;
+
 
 /// Minimum duration (in seconds) a round must be open for betting.
 pub const MIN_ROUND_DURATION: i64 = 180; // 3 minutes

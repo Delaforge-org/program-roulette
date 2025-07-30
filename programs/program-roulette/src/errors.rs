@@ -18,6 +18,8 @@ pub enum RouletteError {
     MustWithdrawExactAmount,
     #[msg("Invalid bet type or numbers provided.")]
     InvalidBet,
+    #[msg("The bet amount exceeds the maximum limit allowed.")]
+    BetAmountExceedsLimit,
     #[msg("Cannot start a new round while one is already in progress.")]
     RoundInProgress,
     #[msg("Bets cannot be placed as the round is not in the 'AcceptingBets' status.")]
