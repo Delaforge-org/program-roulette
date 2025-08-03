@@ -141,11 +141,10 @@ pub fn place_bet(ctx: Context<PlaceBets>, bet: Bet) -> Result<()> {
 
 pub fn claim_my_winnings(ctx: Context<ClaimMyWinnings>, round_to_claim: u64) -> Result<()> {
     let game_session = &ctx.accounts.game_session;
-    let player_bets_account = &ctx.accounts.player_bets;
+    let player_bets_account = &mut ctx.accounts.player_bets;
     let vault = &mut ctx.accounts.vault;
     let player_token_account_info = &ctx.accounts.player_token_account;
     let vault_token_account_info = &ctx.accounts.vault_token_account;
-    let claim_record = &mut ctx.accounts.claim_record;
     let player_key = ctx.accounts.player.key();
     let program_id = ctx.program_id;
 
@@ -177,14 +176,16 @@ pub fn claim_my_winnings(ctx: Context<ClaimMyWinnings>, round_to_claim: u64) -> 
     );
 
     require_keys_eq!(
-        claim_record.key(),
+        player_bets_account.key(),
         expected_claim_record_pda,
         RouletteError::InvalidPlayerBetsAccount
     );
 
-    if claim_record.claimed {
-        return err!(RouletteError::Unauthorized); 
-    }
+    //New check: 
+    require!(
+        player_bets_account.claimed_round < round_to_claim,
+        RouletteError::Unauthorized
+    );
 
     let player_token_account: TokenAccount = TokenAccount::try_deserialize(
         &mut &player_token_account_info.data.borrow()[..]
@@ -221,8 +222,7 @@ pub fn claim_my_winnings(ctx: Context<ClaimMyWinnings>, round_to_claim: u64) -> 
     let actual_payout = total_payout.min(vault.total_liquidity);
 
     if total_payout == 0 {
-         claim_record.claimed = true;
-         claim_record.bump = ctx.bumps.claim_record; 
+         player_bets_account.claimed_round = round_to_claim;
          return err!(RouletteError::NoWinningsFound);
     }
 
@@ -251,8 +251,7 @@ pub fn claim_my_winnings(ctx: Context<ClaimMyWinnings>, round_to_claim: u64) -> 
         // Consider if this specific alert should be an event if it's critical for off-chain monitoring
     }
 
-    claim_record.claimed = true;
-    claim_record.bump = ctx.bumps.claim_record; 
+    player_bets_account.claimed_round = round_to_claim;
 
     emit!(WinningsClaimed {
         round: round_claimed,

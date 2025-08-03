@@ -65,6 +65,7 @@ pub struct VaultAccount {
 #[account]
 #[derive(Default)]
 pub struct GameSession {
+    pub authority: Pubkey,
     pub current_round: u64,
     pub round_start_time: i64,
     pub round_status: RoundStatus,
@@ -83,6 +84,7 @@ pub struct PlayerBets {
     pub vault: Pubkey,
     pub token_mint: Pubkey,
     pub bets: Vec<Bet>,
+    pub claimed_round: u64,
     pub bump: u8,
 }
 

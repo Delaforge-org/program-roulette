@@ -26,10 +26,6 @@ pub enum RouletteError {
     BetsNotAccepted,
     #[msg("The current round status does not allow this operation.")]
     InvalidRoundStatus,
-    #[msg("Too early to close bets; the minimum round duration has not elapsed.")]
-    TooEarlyToClose,
-    #[msg("Too early for payouts; necessary processing or delay period not complete.")]
-    TooEarlyForPayouts,
     #[msg("Player has no bets recorded for this round.")]
     NoBetsInRound,
     #[msg("The global GameSession account was not found or is not initialized.")]
@@ -60,10 +56,6 @@ pub enum RouletteError {
     ClaimRoundMismatchOrNotCompleted,
     #[msg("No winnings found for the player in the specified round (claim attempted).")]
     NoWinningsFound,
-    #[msg("Too early to get random number; minimum duration after closing bets has not passed.")]
-    TooEarlyToGetRandom,
-    #[msg("Too early to start a new round; minimum duration after getting random number has not passed.")]
-    TooEarlyToStartNewRound,
     #[msg("Owner of the provided treasury token account is invalid.")]
     InvalidTreasuryAccountOwner,
     #[msg("Mint of the provided treasury token account does not match the vault's token mint.")]
@@ -72,4 +64,6 @@ pub enum RouletteError {
     BetsRoundMismatch,
     #[msg("Maximum number of liquidity providers for this vault has been reached.")]
     ProviderLimitReached,
+    #[msg("Only the game authority can perform this operation.")]
+    AdminOnly,
 }

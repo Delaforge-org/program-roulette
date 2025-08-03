@@ -54,7 +54,7 @@ pub struct InitializeGameSession<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
 
-    #[account(init, payer = authority, space = 85, seeds = [b"game_session"], bump)]
+    #[account(init, payer = authority, space = 117, seeds = [b"game_session"], bump)] // 85 + 32 = 117
     pub game_session: Account<'info, GameSession>,
 
     pub system_program: Program<'info, System>,
@@ -202,6 +202,16 @@ pub struct WithdrawProviderRevenue<'info> {
 /// Accounts required for the program authority to withdraw accumulated owner revenue.
 #[derive(Accounts)]
 pub struct WithdrawOwnerRevenue<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        seeds = [b"game_session"], 
+        bump = game_session.bump,
+        constraint = authority.key() == game_session.authority @ RouletteError::AdminOnly
+    )]
+    pub game_session: Account<'info, GameSession>,
+
     /// The vault account holding the owner revenue. Mutable to update `total_liquidity` and `owner_reward`.
     #[account(
         mut,
@@ -289,14 +299,19 @@ pub struct InitializeAndProvideLiquidity<'info> {
 #[derive(Accounts)]
 pub struct StartNewRound<'info> {
     /// The global `GameSession` account. Mutable to update round status, number, times, etc.
-    #[account(mut, seeds = [b"game_session"], bump = game_session.bump)]
+    #[account(
+        mut, 
+        seeds = [b"game_session"], 
+        bump = game_session.bump,
+        constraint = starter.key() == game_session.authority @ RouletteError::AdminOnly
+    )]
     pub game_session: Account<'info, GameSession>,
 
-    /// The user initiating the new round (signer).
+    /// The admin initiating the new round (signer).
     #[account(mut)]
     pub starter: Signer<'info>,
 
-    pub system_program: Program<'info, System>, // Kept in case needed for future logic
+    pub system_program: Program<'info, System>,
 }
 
 /// Accounts required for a player to place bets in the current round.
@@ -341,24 +356,34 @@ pub struct PlaceBets<'info> {
 #[derive(Accounts)]
 pub struct CloseBets<'info> {
     /// The global `GameSession` account. Mutable to update status and timestamps.
-    #[account(mut, seeds = [b"game_session"], bump = game_session.bump)]
+    #[account(
+        mut, 
+        seeds = [b"game_session"], 
+        bump = game_session.bump,
+        constraint = closer.key() == game_session.authority @ RouletteError::AdminOnly
+    )]
     pub game_session: Account<'info, GameSession>,
 
-    /// The user initiating the closing of bets (signer).
+    /// The admin initiating the closing of bets (signer).
     #[account(mut)]
     pub closer: Signer<'info>,
 
-    pub system_program: Program<'info, System>, // Kept in case needed for future logic
+    pub system_program: Program<'info, System>,
 }
 
 /// Accounts required to trigger the random number generation for the current round.
 #[derive(Accounts)]
 pub struct GetRandom<'info> {
     /// The global `GameSession` account. Mutable to store the winning number and update status.
-    #[account(mut, seeds = [b"game_session"], bump = game_session.bump)]
+    #[account(
+        mut, 
+        seeds = [b"game_session"], 
+        bump = game_session.bump,
+        constraint = random_initiator.key() == game_session.authority @ RouletteError::AdminOnly
+    )]
     pub game_session: Account<'info, GameSession>,
 
-    /// The user initiating the random generation (signer).
+    /// The admin initiating the random generation (signer).
     #[account(mut)]
     pub random_initiator: Signer<'info>,
 }
@@ -367,64 +392,30 @@ pub struct GetRandom<'info> {
 /// Uses the player's LATEST bets recorded in their PlayerBets account.
 #[derive(Accounts)]
 pub struct ClaimMyWinnings<'info> {
-    /// The player claiming the winnings (signer). Pays for `claim_record` creation if needed.
     #[account(mut)]
     pub player: Signer<'info>,
 
-    /// The global game session account. Checked to ensure a winning number exists.
-    #[account(
-        seeds = [b"game_session"],
-        bump = game_session.bump,
-    )]
-    pub game_session: Account<'info, GameSession>, // Needed for winning_number and last_completed_round
+    #[account(seeds = [b"game_session"], bump = game_session.bump)]
+    pub game_session: Account<'info, GameSession>,
 
-    /// The player's bets account, containing their LATEST placed bets, vault, and token mint.
     #[account(
+        mut,
         seeds = [b"player_bets", game_session.key().as_ref(), player.key().as_ref()],
         bump = player_bets.bump,
         constraint = player_bets.player == player.key() @ RouletteError::Unauthorized,
     )]
     pub player_bets: Account<'info, PlayerBets>,
 
-    /// The vault corresponding to the LATEST token_mint used by the player in `player_bets`.
-    #[account(
-        mut,
-        seeds = [b"vault", player_bets.token_mint.as_ref()],
-        bump = vault.bump,
-        constraint = vault.key() == player_bets.vault @ RouletteError::VaultMismatch,
-    )]
+    #[account(mut, seeds = [b"vault", player_bets.token_mint.as_ref()], bump = vault.bump)]
     pub vault: Account<'info, VaultAccount>,
 
     /// CHECK: Validated manually + via constraint below.
-    #[account(
-        mut,
-        constraint = vault_token_account.key() == vault.token_account @ RouletteError::InvalidTokenAccount,
-    )]
+    #[account(mut, constraint = vault_token_account.key() == vault.token_account)]
     pub vault_token_account: AccountInfo<'info>,
 
     /// CHECK: Validated manually (mint, owner).
     #[account(mut)]
     pub player_token_account: AccountInfo<'info>,
 
-    #[account(
-        init_if_needed,
-        payer = player,
-        space = 8 + 1 + 1, // Discriminator + claimed: bool + bump: u8
-        seeds = [
-            b"claim_record",
-            player.key().as_ref(),
-            // The seed here now uses the last_completed_round from game_session.
-            // Verification that this matches the *intended* round_to_claim happens inside the function.
-            game_session.last_completed_round.to_le_bytes().as_ref(),
-        ],
-        bump
-    )]
-    pub claim_record: Account<'info, ClaimRecord>,
-
-    /// SPL Token Program.
     pub token_program: Program<'info, Token>,
-    /// System Program (for creating `claim_record`).
-    pub system_program: Program<'info, System>,
-    /// Rent Sysvar (for creating `claim_record`).
-    pub rent: Sysvar<'info, Rent>,
 }

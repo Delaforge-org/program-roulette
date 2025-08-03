@@ -1,7 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::hash;
 use crate::{
-    constants::*,
     contexts::*,
     errors::RouletteError,
     events::*,
@@ -11,6 +10,9 @@ use crate::{
 
 pub fn initialize_game_session(ctx: Context<InitializeGameSession>) -> Result<()> {
     let game_session = &mut ctx.accounts.game_session;
+    
+    game_session.authority = *ctx.accounts.authority.key;
+    
     game_session.current_round = 0;
     game_session.round_start_time = 0;
     game_session.round_status = RoundStatus::NotStarted;
@@ -18,7 +20,7 @@ pub fn initialize_game_session(ctx: Context<InitializeGameSession>) -> Result<()
     game_session.bets_closed_timestamp = 0;
     game_session.get_random_timestamp = 0;
     game_session.bump = ctx.bumps.game_session;
-    game_session.last_bettor = None; // Initialize last_bettor
+    game_session.last_bettor = None;
     game_session.last_completed_round = 0;
     Ok(())
 }
@@ -34,16 +36,11 @@ pub fn start_new_round(ctx: Context<StartNewRound>) -> Result<()> {
         RouletteError::RoundInProgress
     );
 
-    if game_session.round_status == RoundStatus::Completed {
-        require!(
-            current_time >= game_session.get_random_timestamp.checked_add(MIN_START_NEW_ROUND_DURATION).unwrap_or(i64::MAX),
-            RouletteError::TooEarlyToStartNewRound
-        );
-    }
 
     game_session.current_round = game_session.current_round
         .checked_add(1)
         .ok_or(RouletteError::ArithmeticOverflow)?;
+    
     game_session.round_start_time = current_time;
     game_session.round_status = RoundStatus::AcceptingBets;
     game_session.bets_closed_timestamp = 0;
@@ -61,8 +58,8 @@ pub fn start_new_round(ctx: Context<StartNewRound>) -> Result<()> {
 
 pub fn close_bets(ctx: Context<CloseBets>) -> Result<()> {
     let game_session = &mut ctx.accounts.game_session;
-    let clock = Clock::get()?;
-    let current_time = clock.unix_timestamp;
+    let current_time = Clock::get()?.unix_timestamp;
+
 
     require!(
         game_session.round_status == RoundStatus::AcceptingBets,
@@ -72,11 +69,7 @@ pub fn close_bets(ctx: Context<CloseBets>) -> Result<()> {
         game_session.last_bettor.is_some(),
         RouletteError::CannotCloseBetsWithoutBets
     );
-    require!(
-        current_time >=
-            game_session.round_start_time.checked_add(MIN_ROUND_DURATION).unwrap_or(i64::MAX),
-        RouletteError::TooEarlyToClose
-    );
+
 
     game_session.round_status = RoundStatus::BetsClosed;
     game_session.bets_closed_timestamp = current_time;
@@ -96,14 +89,10 @@ pub fn get_random(ctx: Context<GetRandom>) -> Result<()> {
     let current_time = clock.unix_timestamp;
     let current_slot = clock.slot;
 
+
     require!(
         game_session.round_status == RoundStatus::BetsClosed,
         RouletteError::RandomBeforeClosing
-    );
-
-    require!(
-        current_time >= game_session.bets_closed_timestamp.checked_add(MIN_BETS_CLOSED_DURATION).unwrap_or(i64::MAX),
-        RouletteError::TooEarlyToGetRandom
     );
 
     require!(game_session.last_bettor.is_some(), RouletteError::NoBetsPlacedInRound);

@@ -3,7 +3,7 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-program-roulette = "G4DQmdyZL7haBvZbjDKJ4w1wKZ1oQVR9CSu5yBW8EZJA"
+program-roulette = "EntPDTNPe9v64FVHbKPBcZtx2yt3V1AirGCe2D2hQR5N"
 
 [registry]
 url = "https://api.apr.dev"

@@ -19,13 +19,6 @@ pub const MAX_BET_PERCENTAGE: u64 = 3;
 /// Divisor for calculating the maximum bet percentage.
 pub const MAX_BET_PERCENTAGE_DIVISOR: u64 = 100;
 
-
-/// Minimum duration (in seconds) a round must be open for betting.
-pub const MIN_ROUND_DURATION: i64 = 180; // 3 minutes
-pub const MIN_BETS_CLOSED_DURATION: i64 = 15; // 15 seconds
-pub const MIN_START_NEW_ROUND_DURATION: i64 = 45; // 45 seconds
-
-
 /// Constant for 'Straight' bet type.
 pub const BET_TYPE_STRAIGHT: u8 = 0;
 /// Constant for 'Split' bet type.
