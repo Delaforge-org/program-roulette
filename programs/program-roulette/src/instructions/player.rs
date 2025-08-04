@@ -146,7 +146,6 @@ pub fn claim_my_winnings(ctx: Context<ClaimMyWinnings>, round_to_claim: u64) -> 
     let player_token_account_info = &ctx.accounts.player_token_account;
     let vault_token_account_info = &ctx.accounts.vault_token_account;
     let player_key = ctx.accounts.player.key();
-    let program_id = ctx.program_id;
 
     let round_claimed = round_to_claim;
 
@@ -166,20 +165,6 @@ pub fn claim_my_winnings(ctx: Context<ClaimMyWinnings>, round_to_claim: u64) -> 
     );
 
     let winning_number = game_session.winning_number.unwrap();
-    let (expected_claim_record_pda, _) = Pubkey::find_program_address(
-        &[
-            b"claim_record",
-            player_key.as_ref(),
-            &round_claimed.to_le_bytes()
-        ],
-        program_id
-    );
-
-    require_keys_eq!(
-        player_bets_account.key(),
-        expected_claim_record_pda,
-        RouletteError::InvalidPlayerBetsAccount
-    );
 
     //New check: 
     require!(
