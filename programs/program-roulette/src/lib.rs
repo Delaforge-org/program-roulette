@@ -39,6 +39,10 @@ pub mod roulette_game {
         instructions::vault::withdraw_owner_revenue(ctx)
     }
 
+    pub fn distribute_payout_reserve(ctx: Context<DistributePayoutReserve>) -> Result<()> {
+        instructions::vault::distribute_payout_reserve(ctx)
+    }
+
     // ========== GAME INSTRUCTIONS ==========
     pub fn initialize_game_session(ctx: Context<InitializeGameSession>) -> Result<()> {
         instructions::game::initialize_game_session(ctx)

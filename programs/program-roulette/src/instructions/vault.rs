@@ -377,3 +377,55 @@ pub fn withdraw_owner_revenue(ctx: Context<WithdrawOwnerRevenue>) -> Result<()> 
 
     Ok(())
 }
+
+pub fn distribute_payout_reserve(ctx: Context<DistributePayoutReserve>) -> Result<()> {
+    let vault = &mut ctx.accounts.vault;
+
+    // 1. Calculate the payout reserve.
+    let payout_reserve = vault.total_liquidity
+        .checked_sub(vault.total_provider_capital)
+        .ok_or(RouletteError::ArithmeticOverflow)?;
+
+    // Ensure there's a reserve to distribute.
+    require!(payout_reserve > 0, RouletteError::NoReward);
+
+    // 2. Determine the amount to distribute (50% of the reserve).
+    let amount_to_distribute = payout_reserve / 2;
+    require!(amount_to_distribute > 0, RouletteError::NoReward);
+
+    // 3. Split the amount 50/50.
+    let owner_share = amount_to_distribute / 2;
+    let providers_share = amount_to_distribute - owner_share; // To avoid dust loss from integer division
+
+    // 4. Distribute the shares.
+    // Add to owner's rewards.
+    vault.owner_reward = vault.owner_reward
+        .checked_add(owner_share)
+        .ok_or(RouletteError::ArithmeticOverflow)?;
+
+    // Distribute to providers via the reward index.
+    if vault.total_provider_capital > 0 {
+        let reward_index_increase = (providers_share as u128)
+            .checked_mul(REWARD_PRECISION)
+            .ok_or(RouletteError::ArithmeticOverflow)?
+            .checked_div(vault.total_provider_capital as u128)
+            .ok_or(RouletteError::ArithmeticOverflow)?;
+
+        vault.reward_per_share_index = vault.reward_per_share_index
+            .checked_add(reward_index_increase)
+            .ok_or(RouletteError::ArithmeticOverflow)?;
+    }
+
+    // 5. Update total liquidity.
+    vault.total_liquidity = vault.total_liquidity
+        .checked_sub(amount_to_distribute)
+        .ok_or(RouletteError::ArithmeticOverflow)?;
+
+    emit!(PayoutReserveDistributed {
+        token_mint: vault.token_mint,
+        amount_distributed: amount_to_distribute,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+
+    Ok(())
+}

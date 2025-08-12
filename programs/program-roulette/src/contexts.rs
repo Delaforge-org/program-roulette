@@ -239,6 +239,32 @@ pub struct WithdrawOwnerRevenue<'info> {
     pub token_program: Program<'info, Token>,
 }
 
+/// Accounts required for the program authority to distribute the payout reserve.
+#[derive(Accounts)]
+pub struct DistributePayoutReserve<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        seeds = [b"game_session"],
+        bump = game_session.bump,
+        constraint = authority.key() == game_session.authority @ RouletteError::AdminOnly
+    )]
+    pub game_session: Account<'info, GameSession>,
+
+    /// The vault account to distribute revenue from.
+    #[account(
+        mut,
+        seeds = [b"vault", token_mint.key().as_ref()],
+        bump = vault.bump,
+    )]
+    pub vault: Account<'info, VaultAccount>,
+
+    /// The mint account for the token.
+    /// CHECK: Used for PDA seeds validation.
+    pub token_mint: AccountInfo<'info>,
+}
+
 /// Accounts for initializing a vault AND providing initial liquidity in a single transaction.
 /// Useful for bootstrapping a new token vault.
 #[derive(Accounts)]

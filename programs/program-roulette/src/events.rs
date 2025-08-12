@@ -68,3 +68,10 @@ pub struct ProviderRevenueWithdrawn {
     pub amount: u64,
     pub timestamp: i64,
 }
+
+#[event]
+pub struct PayoutReserveDistributed {
+    pub token_mint: Pubkey,
+    pub amount_distributed: u64,
+    pub timestamp: i64,
+}
