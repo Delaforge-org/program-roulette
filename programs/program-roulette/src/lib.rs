@@ -15,7 +15,7 @@ use state::Bet; // Needed for the place_bet function signature
 declare_id!("EntPDTNPe9v64FVHbKPBcZtx2yt3V1AirGCe2D2hQR5N");
 
 #[program]
-pub mod roulette_game {
+pub mod program_roulette {
     use super::*;
 
     // ========== VAULT INSTRUCTIONS ==========

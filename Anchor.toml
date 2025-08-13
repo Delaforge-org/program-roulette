@@ -5,6 +5,9 @@ skip-lint = false
 [programs.devnet]
 program-roulette = "EntPDTNPe9v64FVHbKPBcZtx2yt3V1AirGCe2D2hQR5N"
 
+[programs.localnet]
+program-roulette = "EntPDTNPe9v64FVHbKPBcZtx2yt3V1AirGCe2D2hQR5N"
+
 [registry]
 url = "https://api.apr.dev"
 
