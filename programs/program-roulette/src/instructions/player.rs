@@ -1,12 +1,15 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, TokenAccount, Transfer};
+use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 use crate::{
     constants::*,
-    contexts::*,
     errors::RouletteError,
     events::*,
     state::*,
 };
+
+// =================================================================================================
+// Player Initialization
+// =================================================================================================
 
 pub fn initialize_player_bets(ctx: Context<InitializePlayerBets>) -> Result<()> {
     msg!("Initializing PlayerBets. Current GameSession status: {:?}", ctx.accounts.game_session.round_status);
@@ -21,10 +24,31 @@ pub fn initialize_player_bets(ctx: Context<InitializePlayerBets>) -> Result<()> 
     Ok(())
 }
 
-/// Closes the player's PlayerBets account for the current game session PDA structure
-/// and returns the rent exemption SOL back to the player.
-/// This should only be called when the player is certain they no longer need
-/// the account (e.g., finished playing or wants to reset).
+#[derive(Accounts)]
+pub struct InitializePlayerBets<'info> {
+    #[account(mut)]
+    pub player: Signer<'info>,
+
+    #[account(seeds = [b"game_session"], bump = game_session.bump)]
+    pub game_session: Account<'info, GameSession>,
+
+    #[account(
+        init,
+        payer = player,
+        space = 8 + 32 + 8 + 32 + 32 + (4 + std::mem::size_of::<Bet>() * MAX_BETS_PER_ROUND) + 1,
+        seeds = [b"player_bets", game_session.key().as_ref(), player.key().as_ref()],
+        bump
+    )]
+    pub player_bets: Account<'info, PlayerBets>,
+
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
+}
+
+// =================================================================================================
+// Player Close Account
+// =================================================================================================
+
 pub fn close_player_bets_account(ctx: Context<ClosePlayerBetsAccount>) -> Result<()> {
     let player_key = ctx.accounts.player.key();
     let player_bets_key = ctx.accounts.player_bets.key();
@@ -37,6 +61,26 @@ pub fn close_player_bets_account(ctx: Context<ClosePlayerBetsAccount>) -> Result
     Ok(())
 }
 
+#[derive(Accounts)]
+pub struct ClosePlayerBetsAccount<'info> {
+    #[account(mut)]
+    pub player: Signer<'info>,
+
+    #[account(
+        mut, // Account data will be wiped, and lamports transferred.
+        seeds = [b"player_bets", game_session.key().as_ref(), player.key().as_ref()],
+        bump = player_bets.bump, // Make sure we are closing the correct PDA
+        close = player // Return lamports to the player signer.
+    )]
+    pub player_bets: Account<'info, PlayerBets>,
+
+    #[account(seeds = [b"game_session"], bump = game_session.bump)]
+    pub game_session: Account<'info, GameSession>,
+}
+
+// =================================================================================================
+// Player Place Bet
+// =================================================================================================
 
 pub fn place_bet(ctx: Context<PlaceBets>, bet: Bet) -> Result<()> {
     let game_session = &mut ctx.accounts.game_session;
@@ -58,8 +102,6 @@ pub fn place_bet(ctx: Context<PlaceBets>, bet: Bet) -> Result<()> {
         .checked_div(MAX_BET_PERCENTAGE_DIVISOR as u128)
         .ok_or(RouletteError::ArithmeticOverflow)? as u64;
 
-    // A max_bet_amount of 0 means the vault is empty or has very little liquidity.
-    // In this case, no bets should be allowed. We also check bet.amount > 0 later.
     require!(
         bet.amount <= max_bet_amount,
         RouletteError::BetAmountExceedsLimit
@@ -138,6 +180,41 @@ pub fn place_bet(ctx: Context<PlaceBets>, bet: Bet) -> Result<()> {
     Ok(())
 }
 
+#[derive(Accounts)]
+pub struct PlaceBets<'info> {
+    #[account(mut)]
+    pub vault: Account<'info, VaultAccount>,
+
+    #[account(mut, seeds = [b"game_session"], bump = game_session.bump)]
+    pub game_session: Account<'info, GameSession>,
+
+    /// CHECK: Validated in instruction logic (is TokenAccount).
+    #[account(mut)]
+    pub player_token_account: AccountInfo<'info>,
+
+    /// CHECK: Validated by the constraint `vault_token_account.key() == vault.token_account`.
+    #[account(
+        mut,
+        constraint = vault_token_account.key() == vault.token_account @ RouletteError::InvalidTokenAccount,
+    )]
+    pub vault_token_account: AccountInfo<'info>,
+
+    #[account(mut)]
+    pub player: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"player_bets", game_session.key().as_ref(), player.key().as_ref()],
+        bump = player_bets.bump // Verify bump of existing account
+    )]
+    pub player_bets: Account<'info, PlayerBets>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+// =================================================================================================
+// Player Claim Winnings
+// =================================================================================================
 
 pub fn claim_my_winnings(ctx: Context<ClaimMyWinnings>, round_to_claim: u64) -> Result<()> {
     let game_session = &ctx.accounts.game_session;
@@ -247,4 +324,34 @@ pub fn claim_my_winnings(ctx: Context<ClaimMyWinnings>, round_to_claim: u64) -> 
     });
 
     Ok(())
+}
+
+#[derive(Accounts)]
+pub struct ClaimMyWinnings<'info> {
+    #[account(mut)]
+    pub player: Signer<'info>,
+
+    #[account(seeds = [b"game_session"], bump = game_session.bump)]
+    pub game_session: Account<'info, GameSession>,
+
+    #[account(
+        mut,
+        seeds = [b"player_bets", game_session.key().as_ref(), player.key().as_ref()],
+        bump = player_bets.bump,
+        constraint = player_bets.player == player.key() @ RouletteError::Unauthorized,
+    )]
+    pub player_bets: Account<'info, PlayerBets>,
+
+    #[account(mut, seeds = [b"vault", player_bets.token_mint.as_ref()], bump = vault.bump)]
+    pub vault: Account<'info, VaultAccount>,
+
+    /// CHECK: Validated manually + via constraint below.
+    #[account(mut, constraint = vault_token_account.key() == vault.token_account)]
+    pub vault_token_account: AccountInfo<'info>,
+
+    /// CHECK: Validated manually (mint, owner).
+    #[account(mut)]
+    pub player_token_account: AccountInfo<'info>,
+
+    pub token_program: Program<'info, Token>,
 }

@@ -1,12 +1,14 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::hash;
 use crate::{
-    contexts::*,
     errors::RouletteError,
     events::*,
     state::*,
 };
 
+// =================================================================================================
+// Game Initialization
+// =================================================================================================
 
 pub fn initialize_game_session(ctx: Context<InitializeGameSession>) -> Result<()> {
     let game_session = &mut ctx.accounts.game_session;
@@ -25,6 +27,21 @@ pub fn initialize_game_session(ctx: Context<InitializeGameSession>) -> Result<()
     Ok(())
 }
 
+#[derive(Accounts)]
+pub struct InitializeGameSession<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(init, payer = authority, space = 117, seeds = [b"game_session"], bump)] // 85 + 32 = 117
+    pub game_session: Account<'info, GameSession>,
+
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
+}
+
+// =================================================================================================
+// Game Start
+// =================================================================================================
 
 pub fn start_new_round(ctx: Context<StartNewRound>) -> Result<()> {
     let game_session = &mut ctx.accounts.game_session;
@@ -55,6 +72,25 @@ pub fn start_new_round(ctx: Context<StartNewRound>) -> Result<()> {
     Ok(())
 }
 
+#[derive(Accounts)]
+pub struct StartNewRound<'info> {
+    #[account(
+        mut, 
+        seeds = [b"game_session"], 
+        bump = game_session.bump,
+        constraint = starter.key() == game_session.authority @ RouletteError::AdminOnly
+    )]
+    pub game_session: Account<'info, GameSession>,
+
+    #[account(mut)]
+    pub starter: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+// =================================================================================================
+// Game Close Bets
+// =================================================================================================
 
 pub fn close_bets(ctx: Context<CloseBets>) -> Result<()> {
     let game_session = &mut ctx.accounts.game_session;
@@ -82,6 +118,25 @@ pub fn close_bets(ctx: Context<CloseBets>) -> Result<()> {
     Ok(())
 }
 
+#[derive(Accounts)]
+pub struct CloseBets<'info> {
+    #[account(
+        mut, 
+        seeds = [b"game_session"], 
+        bump = game_session.bump,
+        constraint = closer.key() == game_session.authority @ RouletteError::AdminOnly
+    )]
+    pub game_session: Account<'info, GameSession>,
+
+    #[account(mut)]
+    pub closer: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+// =================================================================================================
+// Game Get Random
+// =================================================================================================
 
 pub fn get_random(ctx: Context<GetRandom>) -> Result<()> {
     let game_session = &mut ctx.accounts.game_session;
@@ -134,4 +189,18 @@ pub fn get_random(ctx: Context<GetRandom>) -> Result<()> {
     });
 
     Ok(())
+}
+
+#[derive(Accounts)]
+pub struct GetRandom<'info> {
+    #[account(
+        mut, 
+        seeds = [b"game_session"], 
+        bump = game_session.bump,
+        constraint = random_initiator.key() == game_session.authority @ RouletteError::AdminOnly
+    )]
+    pub game_session: Account<'info, GameSession>,
+
+    #[account(mut)]
+    pub random_initiator: Signer<'info>,
 }

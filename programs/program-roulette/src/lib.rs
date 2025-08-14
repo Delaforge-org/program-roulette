@@ -2,14 +2,13 @@ use anchor_lang::prelude::*;
 
 // 1. Declare all our modules
 pub mod constants;
-pub mod contexts;
 pub mod errors;
 pub mod events;
 pub mod instructions;
 pub mod state;
 
 // 2. Make everything from them accessible
-use contexts::*;
+use instructions::*;
 use state::Bet; // Needed for the place_bet function signature
 
 declare_id!("EntPDTNPe9v64FVHbKPBcZtx2yt3V1AirGCe2D2hQR5N");
