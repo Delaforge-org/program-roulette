@@ -11,7 +11,7 @@ pub mod state;
 use instructions::*;
 use state::Bet; // Needed for the place_bet function signature
 
-declare_id!("EntPDTNPe9v64FVHbKPBcZtx2yt3V1AirGCe2D2hQR5N");
+declare_id!("4oMFMMUBuACjVW9DPbEbgPhaT4XFqHTTP43EjFqfugqb");
 
 #[program]
 pub mod program_roulette {
@@ -74,5 +74,10 @@ pub mod program_roulette {
 
     pub fn claim_my_winnings(ctx: Context<ClaimMyWinnings>, round_to_claim: u64) -> Result<()> {
         instructions::player::claim_my_winnings(ctx, round_to_claim)
+    }
+
+    // ========== READ-ONLY INSTRUCTIONS ==========
+    pub fn get_unclaimed_rewards(ctx: Context<GetUnclaimedRewards>) -> Result<()> {
+        instructions::vault::get_unclaimed_rewards(ctx)
     }
 }

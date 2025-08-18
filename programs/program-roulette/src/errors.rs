@@ -18,6 +18,8 @@ pub enum RouletteError {
     MustWithdrawExactAmount,
     #[msg("Invalid bet type or numbers provided.")]
     InvalidBet,
+    #[msg("The provided amount must be greater than zero.")]
+    AmountMustBeGreaterThanZero,
     #[msg("The bet amount exceeds the maximum limit allowed.")]
     BetAmountExceedsLimit,
     #[msg("Cannot start a new round while one is already in progress.")]
@@ -52,6 +54,8 @@ pub enum RouletteError {
     VaultPDAMismatch,
     #[msg("Invalid SPL token account provided (e.g., wrong mint, owner, or not initialized).")]
     InvalidTokenAccount,
+    #[msg("Provider and vault token accounts must be different.")]
+    DuplicateTokenAccount,
     #[msg("Attempting to claim winnings for a round where the winning number is not available.")]
     ClaimRoundMismatchOrNotCompleted,
     #[msg("No winnings found for the player in the specified round (claim attempted).")]

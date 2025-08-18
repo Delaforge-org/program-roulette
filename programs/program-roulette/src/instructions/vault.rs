@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::program::set_return_data;
 use anchor_lang::system_program;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer, SetAuthority};
 use anchor_spl::token::spl_token::instruction::AuthorityType;
@@ -17,23 +18,7 @@ pub fn initialize_and_provide_liquidity(
     ctx: Context<InitializeAndProvideLiquidity>,
     amount: u64
 ) -> Result<()> {
-    // Manual deserialization and validation
-    let provider_token_info = &ctx.accounts.provider_token_account;
-    let vault_token_info = &ctx.accounts.vault_token_account;
-    let _provider_token_account: TokenAccount = TokenAccount::try_deserialize(
-        &mut &provider_token_info.data.borrow()[..]
-    )?;
-    let _vault_token_account: TokenAccount = TokenAccount::try_deserialize(
-        &mut &vault_token_info.data.borrow()[..]
-    )?;
-    let mint_info = &ctx.accounts.token_mint;
-    let _mint: Mint = Mint::try_deserialize(&mut &mint_info.data.borrow()[..])?;
-    require_eq!(
-        _provider_token_account.mint,
-        mint_info.key(),
-        RouletteError::InvalidTokenAccount
-    );
-    require_eq!(_vault_token_account.mint, mint_info.key(), RouletteError::InvalidTokenAccount);
+    // Anchor's constraints now handle deserialization and validation automatically.
 
     system_program::transfer(
         CpiContext::new(
@@ -58,7 +43,6 @@ pub fn initialize_and_provide_liquidity(
     let provider_state = &mut ctx.accounts.provider_state;
     provider_state.vault = vault.key();
     provider_state.provider = ctx.accounts.liquidity_provider.key();
-    provider_state.amount = 0;
     provider_state.unclaimed_rewards = 0;
     provider_state.reward_per_share_index_last_claimed = 0; // Starts at 0
     provider_state.bump = ctx.bumps.provider_state;
@@ -104,8 +88,7 @@ pub fn initialize_and_provide_liquidity(
 #[derive(Accounts)]
 pub struct InitializeAndProvideLiquidity<'info> {
     /// The mint account of the SPL token for the new vault.
-    /// CHECK: Verified in instruction logic (is Mint).
-    pub token_mint: AccountInfo<'info>,
+    pub token_mint: Account<'info, Mint>,
 
     /// The `VaultAccount` PDA to be initialized.
     /// Seeds: [b"vault", token_mint_key]
@@ -128,24 +111,32 @@ pub struct InitializeAndProvideLiquidity<'info> {
     )]
     pub provider_state: Account<'info, ProviderState>,
 
-    /// CHECK: Validated in instruction logic (is TokenAccount).
-    #[account(mut)]
-    pub provider_token_account: AccountInfo<'info>,
+    /// The provider's token account. It must be for the same mint as `token_mint`.
+    #[account(
+        mut,
+        constraint = provider_token_account.mint == token_mint.key() @ RouletteError::InvalidTokenAccount
+    )]
+    pub provider_token_account: Account<'info, TokenAccount>,
 
-    /// CHECK: Verified in instruction logic (is TokenAccount).
-    #[account(mut)]
-    pub vault_token_account: AccountInfo<'info>,
+    /// The token account that will become the vault's token account.
+    /// It must also be for the same mint.
+    #[account(
+        mut,
+        constraint = vault_token_account.mint == token_mint.key() @ RouletteError::InvalidTokenAccount,
+        constraint = vault_token_account.key() != provider_token_account.key() @ RouletteError::DuplicateTokenAccount
+    )]
+    pub vault_token_account: Account<'info, TokenAccount>,
 
     /// The initial liquidity provider (signer). Pays for account creation.
     #[account(mut)]
     pub liquidity_provider: Signer<'info>,
 
-    /// CHECK: Address checked in instruction logic, used for SOL transfer. Must be writable.
+    /// The treasury account that receives the vault creation fee.
     #[account(
         mut,
         address = TREASURY_PUBKEY
     )]
-    pub treasury_account: AccountInfo<'info>,
+    pub treasury_account: SystemAccount<'info>,
 
     /// The Solana System Program.
     pub system_program: Program<'info, System>,
@@ -165,33 +156,17 @@ pub fn provide_liquidity(ctx: Context<ProvideLiquidity>, amount: u64) -> Result<
         ctx.accounts.vault.token_mint,
         RouletteError::InvalidTokenAccount
     );
-    require!(amount > 0, RouletteError::InvalidBet); // Can't provide 0 liquidity
+    require!(amount > 0, RouletteError::AmountMustBeGreaterThanZero); // Can't provide 0 liquidity
 
     let vault = &mut ctx.accounts.vault;
     let provider_state = &mut ctx.accounts.provider_state;
-    let liquidity_provider = &ctx.accounts.liquidity_provider;
     let current_reward_index = vault.reward_per_share_index;
 
     // --- Start of reward update logic ---
-    // Update rewards based on capital *before* adding the new amount.
-    let last_claimed_index = provider_state.reward_per_share_index_last_claimed;
-    let provider_capital = provider_state.amount;
-
-    if last_claimed_index < current_reward_index && provider_capital > 0 {
-        let index_delta = current_reward_index
-            .checked_sub(last_claimed_index)
-            .ok_or(RouletteError::ArithmeticOverflow)?;
-
-        let newly_earned_reward = (index_delta)
-            .checked_mul(provider_capital as u128)
-            .ok_or(RouletteError::ArithmeticOverflow)?
-            .checked_div(REWARD_PRECISION)
-            .ok_or(RouletteError::ArithmeticOverflow)?;
-
-        provider_state.unclaimed_rewards = provider_state.unclaimed_rewards
-            .checked_add(newly_earned_reward as u64)
-            .ok_or(RouletteError::ArithmeticOverflow)?;
-    }
+    let newly_earned_reward = calculate_newly_earned_rewards(provider_state, current_reward_index)?;
+    provider_state.unclaimed_rewards = provider_state.unclaimed_rewards
+        .checked_add(newly_earned_reward)
+        .ok_or(RouletteError::ArithmeticOverflow)?;
     // --- End of reward update logic ---
 
     // Transfer liquidity
@@ -199,7 +174,7 @@ pub fn provide_liquidity(ctx: Context<ProvideLiquidity>, amount: u64) -> Result<
         CpiContext::new(ctx.accounts.token_program.to_account_info(), Transfer {
             from: ctx.accounts.provider_token_account.to_account_info(),
             to: ctx.accounts.vault_token_account.to_account_info(),
-            authority: liquidity_provider.to_account_info(),
+            authority: ctx.accounts.liquidity_provider.to_account_info(),
         }),
         amount
     )?;
@@ -207,7 +182,7 @@ pub fn provide_liquidity(ctx: Context<ProvideLiquidity>, amount: u64) -> Result<
     // If the provider state account is being initialized, set its fixed data.
     if provider_state.vault == Pubkey::default() {
         provider_state.vault = vault.key();
-        provider_state.provider = liquidity_provider.key();
+        provider_state.provider = ctx.accounts.liquidity_provider.key();
         provider_state.bump = ctx.bumps.provider_state;
     }
 
@@ -229,7 +204,7 @@ pub fn provide_liquidity(ctx: Context<ProvideLiquidity>, amount: u64) -> Result<
     provider_state.reward_per_share_index_last_claimed = current_reward_index;
 
     emit!(LiquidityProvided {
-        provider: liquidity_provider.key(),
+        provider: ctx.accounts.liquidity_provider.key(),
         token_mint: vault.token_mint,
         amount,
         timestamp: Clock::get()?.unix_timestamp,
@@ -249,8 +224,7 @@ pub struct ProvideLiquidity<'info> {
     pub vault: Account<'info, VaultAccount>,
 
     /// The mint account for the token being deposited
-    /// CHECK: Used for PDA seeds validation
-    pub token_mint: AccountInfo<'info>,
+    pub token_mint: Account<'info, Mint>,
 
     /// The user's state account for this vault. Created if it doesn't exist.
     #[account(
@@ -262,16 +236,21 @@ pub struct ProvideLiquidity<'info> {
     )]
     pub provider_state: Account<'info, ProviderState>,
 
-    /// CHECK: Validated in instruction logic (is TokenAccount).
-    #[account(mut)]
-    pub provider_token_account: AccountInfo<'info>,
-
-    /// CHECK: Validated in instruction logic (is TokenAccount). Constraint ensures it matches the vault's stored `token_account`.
+    /// The provider's token account, constrained to the correct mint.
     #[account(
         mut,
-        constraint = vault_token_account.key() == vault.token_account,
+        constraint = provider_token_account.mint == token_mint.key() @ RouletteError::InvalidTokenAccount
     )]
-    pub vault_token_account: AccountInfo<'info>,
+    pub provider_token_account: Account<'info, TokenAccount>,
+
+    /// The vault's token account. Constraint ensures it matches the vault's stored `token_account`.
+    #[account(
+        mut,
+        constraint = vault_token_account.key() == vault.token_account @ RouletteError::VaultMismatch,
+        constraint = vault_token_account.mint == token_mint.key() @ RouletteError::InvalidTokenAccount,
+        constraint = vault_token_account.key() != provider_token_account.key() @ RouletteError::DuplicateTokenAccount
+    )]
+    pub vault_token_account: Account<'info, TokenAccount>,
 
     /// The liquidity provider (signer).
     #[account(mut)]
@@ -293,26 +272,10 @@ pub fn withdraw_liquidity(ctx: Context<WithdrawLiquidity>) -> Result<()> {
     let current_reward_index = vault.reward_per_share_index;
 
     // --- Start of reward calculation ---
-    // Calculate any final rewards earned since the last action.
-    let last_claimed_index = provider_state.reward_per_share_index_last_claimed;
-    let provider_capital = provider_state.amount;
-    let mut final_unclaimed_rewards = provider_state.unclaimed_rewards;
-
-    if last_claimed_index < current_reward_index && provider_capital > 0 {
-        let index_delta = current_reward_index
-            .checked_sub(last_claimed_index)
-            .ok_or(RouletteError::ArithmeticOverflow)?;
-
-        let newly_earned_reward = (index_delta)
-            .checked_mul(provider_capital as u128)
-            .ok_or(RouletteError::ArithmeticOverflow)?
-            .checked_div(REWARD_PRECISION)
-            .ok_or(RouletteError::ArithmeticOverflow)?;
-
-        final_unclaimed_rewards = final_unclaimed_rewards
-            .checked_add(newly_earned_reward as u64)
-            .ok_or(RouletteError::ArithmeticOverflow)?;
-    }
+    let newly_earned_reward = calculate_newly_earned_rewards(provider_state, current_reward_index)?;
+    let final_unclaimed_rewards = provider_state.unclaimed_rewards
+        .checked_add(newly_earned_reward)
+        .ok_or(RouletteError::ArithmeticOverflow)?;
     // --- End of reward calculation ---
 
     // Determine the total amount to withdraw: all capital + all rewards.
@@ -389,19 +352,24 @@ pub struct WithdrawLiquidity<'info> {
     )]
     pub provider_state: Account<'info, ProviderState>,
 
-    /// CHECK: Used for PDA seeds validation
-    pub token_mint: AccountInfo<'info>,
+    /// The mint account for the token.
+    pub token_mint: Account<'info, Mint>,
 
-    /// CHECK: The provider's token account to receive the funds.
-    #[account(mut)]
-    pub provider_token_account: AccountInfo<'info>,
-
-    /// CHECK: The vault's token account.
+    /// The provider's token account to receive the funds.
     #[account(
         mut,
-        constraint = vault_token_account.key() == vault.token_account,
+        constraint = provider_token_account.mint == token_mint.key() @ RouletteError::InvalidTokenAccount,
+        constraint = provider_token_account.key() != vault_token_account.key() @ RouletteError::DuplicateTokenAccount
     )]
-    pub vault_token_account: AccountInfo<'info>,
+    pub provider_token_account: Account<'info, TokenAccount>,
+
+    /// The vault's token account.
+    #[account(
+        mut,
+        constraint = vault_token_account.key() == vault.token_account @ RouletteError::VaultMismatch,
+        constraint = vault_token_account.mint == token_mint.key() @ RouletteError::InvalidTokenAccount
+    )]
+    pub vault_token_account: Account<'info, TokenAccount>,
 
     /// The liquidity provider requesting the withdrawal (signer).
     #[account(mut)]
@@ -421,25 +389,10 @@ pub fn withdraw_provider_revenue(ctx: Context<WithdrawProviderRevenue>) -> Resul
     let current_reward_index = vault.reward_per_share_index;
 
     // --- Start of reward calculation ---
-    // Calculate any final rewards earned since the last action.
-    let last_claimed_index = provider_state.reward_per_share_index_last_claimed;
-    let provider_capital = provider_state.amount;
-
-    if last_claimed_index < current_reward_index && provider_capital > 0 {
-        let index_delta = current_reward_index
-            .checked_sub(last_claimed_index)
-            .ok_or(RouletteError::ArithmeticOverflow)?;
-
-        let newly_earned_reward = (index_delta)
-            .checked_mul(provider_capital as u128)
-            .ok_or(RouletteError::ArithmeticOverflow)?
-            .checked_div(REWARD_PRECISION)
-            .ok_or(RouletteError::ArithmeticOverflow)?;
-
-        provider_state.unclaimed_rewards = provider_state.unclaimed_rewards
-            .checked_add(newly_earned_reward as u64)
-            .ok_or(RouletteError::ArithmeticOverflow)?;
-    }
+    let newly_earned_reward = calculate_newly_earned_rewards(provider_state, current_reward_index)?;
+    provider_state.unclaimed_rewards = provider_state.unclaimed_rewards
+        .checked_add(newly_earned_reward)
+        .ok_or(RouletteError::ArithmeticOverflow)?;
     // --- End of reward calculation ---
 
     let total_rewards_to_claim = provider_state.unclaimed_rewards;
@@ -508,19 +461,23 @@ pub struct WithdrawProviderRevenue<'info> {
     pub provider_state: Account<'info, ProviderState>,
 
     /// The mint account for the token being withdrawn
-    /// CHECK: Used for PDA seeds validation
-    pub token_mint: AccountInfo<'info>,
+    pub token_mint: Account<'info, Mint>,
 
-    /// CHECK: The provider's token account to receive rewards.
-    #[account(mut)]
-    pub provider_token_account: AccountInfo<'info>,
-
-    /// CHECK: The vault's token account.
+    /// The provider's token account to receive rewards.
     #[account(
         mut,
-        constraint = vault_token_account.key() == vault.token_account,
+        constraint = provider_token_account.mint == token_mint.key() @ RouletteError::InvalidTokenAccount,
+        constraint = provider_token_account.key() != vault_token_account.key() @ RouletteError::DuplicateTokenAccount
     )]
-    pub vault_token_account: AccountInfo<'info>,
+    pub provider_token_account: Account<'info, TokenAccount>,
+
+    /// The vault's token account.
+    #[account(
+        mut,
+        constraint = vault_token_account.key() == vault.token_account @ RouletteError::VaultMismatch,
+        constraint = vault_token_account.mint == token_mint.key() @ RouletteError::InvalidTokenAccount
+    )]
+    pub vault_token_account: Account<'info, TokenAccount>,
 
     /// The liquidity provider requesting the withdrawal (signer).
     #[account(mut)]
@@ -535,31 +492,10 @@ pub struct WithdrawProviderRevenue<'info> {
 // =================================================================================================
 
 pub fn withdraw_owner_revenue(ctx: Context<WithdrawOwnerRevenue>) -> Result<()> {
-    // Verify that token_mint matches vault.token_mint
-    require_keys_eq!(
-        ctx.accounts.token_mint.key(),
-        ctx.accounts.vault.token_mint,
-        RouletteError::InvalidTokenAccount
-    );
-
+    // Anchor's constraints now handle token_mint and treasury account validation.
     let vault = &mut ctx.accounts.vault;
-    let treasury_token_account_info = &ctx.accounts.owner_treasury_token_account;
-    let treasury_spl_token_account = TokenAccount::try_deserialize(
-        &mut &treasury_token_account_info.data.borrow()[..]
-    )?;
-
-    require_keys_eq!(
-        treasury_spl_token_account.owner,
-        TREASURY_PUBKEY,
-        RouletteError::InvalidTreasuryAccountOwner
-    );
-    require_eq!(
-        treasury_spl_token_account.mint,
-        vault.token_mint,
-        RouletteError::TreasuryAccountMintMismatch
-    );
-
     let reward_amount = vault.owner_reward;
+
     require!(reward_amount > 0, RouletteError::NoReward);
     require!(vault.total_liquidity >= reward_amount, RouletteError::InsufficientLiquidity);
 
@@ -571,7 +507,7 @@ pub fn withdraw_owner_revenue(ctx: Context<WithdrawOwnerRevenue>) -> Result<()> 
             ctx.accounts.token_program.to_account_info(),
             Transfer {
                 from: ctx.accounts.vault_token_account.to_account_info(),
-                to: treasury_token_account_info.to_account_info(),
+                to: ctx.accounts.owner_treasury_token_account.to_account_info(),
                 authority: vault.to_account_info(),
             },
             signer_seeds
@@ -609,19 +545,23 @@ pub struct WithdrawOwnerRevenue<'info> {
     pub vault: Account<'info, VaultAccount>,
 
     /// The mint account for the token being withdrawn
-    /// CHECK: Used for PDA seeds validation
-    pub token_mint: AccountInfo<'info>,
+    pub token_mint: Account<'info, Mint>,
 
-    /// CHECK: Validated in instruction logic (is TokenAccount).
-    #[account(mut)]
-    pub owner_treasury_token_account: AccountInfo<'info>,
-
-    /// CHECK: Validated in instruction logic (is TokenAccount). Constraint ensures it matches the vault's stored `token_account`.
+    /// The treasury's token account to receive the funds.
     #[account(
         mut,
-        constraint = vault_token_account.key() == vault.token_account,
+        constraint = owner_treasury_token_account.mint == token_mint.key() @ RouletteError::TreasuryAccountMintMismatch,
+        constraint = owner_treasury_token_account.owner == TREASURY_PUBKEY @ RouletteError::InvalidTreasuryAccountOwner
     )]
-    pub vault_token_account: AccountInfo<'info>,
+    pub owner_treasury_token_account: Account<'info, TokenAccount>,
+
+    /// The vault's token account.
+    #[account(
+        mut,
+        constraint = vault_token_account.key() == vault.token_account @ RouletteError::VaultMismatch,
+        constraint = vault_token_account.mint == token_mint.key() @ RouletteError::InvalidTokenAccount
+    )]
+    pub vault_token_account: Account<'info, TokenAccount>,
 
     /// The SPL Token Program, needed for the token transfer CPI.
     pub token_program: Program<'info, Token>,
@@ -643,12 +583,18 @@ pub fn distribute_payout_reserve(ctx: Context<DistributePayoutReserve>) -> Resul
     require!(payout_reserve > 0, RouletteError::NoReward);
 
     // 2. Determine the amount to distribute (50% of the reserve).
-    let amount_to_distribute = payout_reserve / 2;
+    let amount_to_distribute = payout_reserve
+        .checked_div(2)
+        .ok_or(RouletteError::ArithmeticOverflow)?;
     require!(amount_to_distribute > 0, RouletteError::NoReward);
 
     // 3. Split the amount 50/50.
-    let owner_share = amount_to_distribute / 2;
-    let providers_share = amount_to_distribute - owner_share; // To avoid dust loss from integer division
+    let owner_share = amount_to_distribute
+        .checked_div(2)
+        .ok_or(RouletteError::ArithmeticOverflow)?;
+    let providers_share = amount_to_distribute
+        .checked_sub(owner_share)
+        .ok_or(RouletteError::ArithmeticOverflow)?; // To avoid dust loss from integer division
 
     // 4. Distribute the shares.
     // Add to owner's rewards.
@@ -704,6 +650,79 @@ pub struct DistributePayoutReserve<'info> {
     pub vault: Account<'info, VaultAccount>,
 
     /// The mint account for the token.
-    /// CHECK: Used for PDA seeds validation.
-    pub token_mint: AccountInfo<'info>,
+    pub token_mint: Account<'info, Mint>,
+}
+
+// =================================================================================================
+// Get Unclaimed Rewards (Read-Only via Simulation)
+// =================================================================================================
+
+pub fn get_unclaimed_rewards(ctx: Context<GetUnclaimedRewards>) -> Result<()> {
+    let vault = &ctx.accounts.vault;
+    let provider_state = &ctx.accounts.provider_state;
+    let current_reward_index = vault.reward_per_share_index;
+
+    // Use the helper to calculate rewards earned since the last action.
+    let newly_earned_reward = calculate_newly_earned_rewards(provider_state, current_reward_index)?;
+    
+    // Add them to the already accumulated (but not yet claimed) rewards.
+    let total_unclaimed_rewards = provider_state.unclaimed_rewards
+        .checked_add(newly_earned_reward)
+        .ok_or(RouletteError::ArithmeticOverflow)?;
+
+    // Set the return data so the client can read it from the simulation result.
+    set_return_data(&total_unclaimed_rewards.to_le_bytes());
+
+    Ok(())
+}
+
+#[derive(Accounts)]
+pub struct GetUnclaimedRewards<'info> {
+    /// The vault account.
+    #[account(
+        seeds = [b"vault", token_mint.key().as_ref()],
+        bump = vault.bump,
+    )]
+    pub vault: Account<'info, VaultAccount>,
+
+    /// The provider's state account.
+    #[account(
+        constraint = provider_state.vault == vault.key() @ RouletteError::VaultMismatch,
+        seeds = [b"provider_state", vault.key().as_ref(), provider.key().as_ref()],
+        bump = provider_state.bump
+    )]
+    pub provider_state: Account<'info, ProviderState>,
+    
+    /// The mint account for the token.
+    pub token_mint: Account<'info, Mint>,
+
+    /// CHECK: The provider's wallet account. No signature is required as this is a read-only function.
+    /// It's used solely for deriving the `provider_state` PDA and no data is read from it.
+    pub provider: UncheckedAccount<'info>,
+}
+
+// A private helper function to calculate rewards without modifying state.
+fn calculate_newly_earned_rewards(
+    provider_state: &ProviderState,
+    current_reward_index: u128
+) -> Result<u64> {
+    let last_claimed_index = provider_state.reward_per_share_index_last_claimed;
+    let provider_capital = provider_state.amount;
+
+    if last_claimed_index < current_reward_index && provider_capital > 0 {
+        let index_delta = current_reward_index
+            .checked_sub(last_claimed_index)
+            .ok_or(RouletteError::ArithmeticOverflow)?;
+
+        let newly_earned_reward = (index_delta)
+            .checked_mul(provider_capital as u128)
+            .ok_or(RouletteError::ArithmeticOverflow)?
+            .checked_div(REWARD_PRECISION)
+            .ok_or(RouletteError::ArithmeticOverflow)?;
+
+        // Ensure the cast is safe, then convert the error type to what Anchor expects.
+        u64::try_from(newly_earned_reward).map_err(|_| RouletteError::ArithmeticOverflow.into())
+    } else {
+        Ok(0)
+    }
 }

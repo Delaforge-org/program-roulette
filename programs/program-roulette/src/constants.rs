@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
 
 pub const TREASURY_PUBKEY: Pubkey = pubkey!("DRqMriKY4X3ggiFdx27Fotu5HebQFyRZhNasWFTzaQ78");
+pub const GAME_ADMIN_PUBKEY: Pubkey = pubkey!("RBAd8hvSpJMtBu5o2BJytCBvy9wy6UKJvebDf7wRw7A");
 pub const CREATE_VAULT_FEE_SOL_LAMPORTS: u64 = 737_000_000;
 
 

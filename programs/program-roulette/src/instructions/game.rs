@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::hash;
 use crate::{
+    constants::GAME_ADMIN_PUBKEY,
     errors::RouletteError,
     events::*,
     state::*,
@@ -78,7 +79,7 @@ pub struct StartNewRound<'info> {
         mut, 
         seeds = [b"game_session"], 
         bump = game_session.bump,
-        constraint = starter.key() == game_session.authority @ RouletteError::AdminOnly
+        constraint = starter.key() == GAME_ADMIN_PUBKEY @ RouletteError::AdminOnly
     )]
     pub game_session: Account<'info, GameSession>,
 
@@ -124,7 +125,7 @@ pub struct CloseBets<'info> {
         mut, 
         seeds = [b"game_session"], 
         bump = game_session.bump,
-        constraint = closer.key() == game_session.authority @ RouletteError::AdminOnly
+        constraint = closer.key() == GAME_ADMIN_PUBKEY @ RouletteError::AdminOnly
     )]
     pub game_session: Account<'info, GameSession>,
 
@@ -197,7 +198,7 @@ pub struct GetRandom<'info> {
         mut, 
         seeds = [b"game_session"], 
         bump = game_session.bump,
-        constraint = random_initiator.key() == game_session.authority @ RouletteError::AdminOnly
+        constraint = random_initiator.key() == GAME_ADMIN_PUBKEY @ RouletteError::AdminOnly
     )]
     pub game_session: Account<'info, GameSession>,
 

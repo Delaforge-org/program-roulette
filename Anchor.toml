@@ -3,10 +3,10 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-program-roulette = "EntPDTNPe9v64FVHbKPBcZtx2yt3V1AirGCe2D2hQR5N"
+program-roulette = "4oMFMMUBuACjVW9DPbEbgPhaT4XFqHTTP43EjFqfugqb"
 
 [programs.localnet]
-program-roulette = "EntPDTNPe9v64FVHbKPBcZtx2yt3V1AirGCe2D2hQR5N"
+program-roulette = "4oMFMMUBuACjVW9DPbEbgPhaT4XFqHTTP43EjFqfugqb"
 
 [registry]
 url = "https://api.apr.dev"
