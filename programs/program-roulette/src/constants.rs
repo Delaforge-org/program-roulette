@@ -16,7 +16,7 @@ pub const OWNER_DIVISOR: u64 = 62;
 pub const REWARD_PRECISION: u128 = 1_000_000_000_000;
 
 /// Maximum bet allowed as a percentage of the vault's total liquidity.
-pub const MAX_BET_PERCENTAGE: u64 = 3;
+pub const MAX_BET_PERCENTAGE: u64 = 4;
 /// Divisor for calculating the maximum bet percentage.
 pub const MAX_BET_PERCENTAGE_DIVISOR: u64 = 100;
 

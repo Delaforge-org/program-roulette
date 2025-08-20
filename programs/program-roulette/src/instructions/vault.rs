@@ -615,11 +615,6 @@ pub fn distribute_payout_reserve(ctx: Context<DistributePayoutReserve>) -> Resul
             .ok_or(RouletteError::ArithmeticOverflow)?;
     }
 
-    // 5. Update total liquidity.
-    vault.total_liquidity = vault.total_liquidity
-        .checked_sub(amount_to_distribute)
-        .ok_or(RouletteError::ArithmeticOverflow)?;
-
     emit!(PayoutReserveDistributed {
         token_mint: vault.token_mint,
         amount_distributed: amount_to_distribute,
