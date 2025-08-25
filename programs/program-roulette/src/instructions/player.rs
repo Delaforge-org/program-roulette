@@ -12,7 +12,6 @@ use crate::{
 // =================================================================================================
 
 pub fn initialize_player_bets(ctx: Context<InitializePlayerBets>) -> Result<()> {
-    msg!("Initializing PlayerBets. Current GameSession status: {:?}", ctx.accounts.game_session.round_status);
     let player_bets = &mut ctx.accounts.player_bets;
     player_bets.player = ctx.accounts.player.key();
     player_bets.round = 0; // Initial round is 0
@@ -20,7 +19,6 @@ pub fn initialize_player_bets(ctx: Context<InitializePlayerBets>) -> Result<()> 
     player_bets.token_mint = Pubkey::default(); // Will be set on first bet
     player_bets.bets = Vec::with_capacity(MAX_BETS_PER_ROUND);
     player_bets.bump = ctx.bumps.player_bets;
-    msg!("PlayerBets account fields initialized for player {}", ctx.accounts.player.key());
     Ok(())
 }
 
@@ -50,13 +48,8 @@ pub struct InitializePlayerBets<'info> {
 // =================================================================================================
 
 pub fn close_player_bets_account(ctx: Context<ClosePlayerBetsAccount>) -> Result<()> {
-    let player_key = ctx.accounts.player.key();
-    let player_bets_key = ctx.accounts.player_bets.key();
-    msg!(
-        "PlayerBets account {} for player {} is being closed. Rent SOL will be refunded.",
-        player_bets_key,
-        player_key
-    );
+    let _player_key = ctx.accounts.player.key();
+    let _player_bets_key = ctx.accounts.player_bets.key();
 
     Ok(())
 }

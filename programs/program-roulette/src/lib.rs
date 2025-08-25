@@ -11,7 +11,7 @@ pub mod state;
 use instructions::*;
 use state::Bet; // Needed for the place_bet function signature
 
-declare_id!("4oMFMMUBuACjVW9DPbEbgPhaT4XFqHTTP43EjFqfugqb");
+declare_id!("Rou1svrgkcuo1rBNkP1XaESrD9xRpukx2uLY5MsgK14");
 
 #[program]
 pub mod program_roulette {

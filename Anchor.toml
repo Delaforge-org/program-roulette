@@ -3,16 +3,16 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-program-roulette = "4oMFMMUBuACjVW9DPbEbgPhaT4XFqHTTP43EjFqfugqb"
+program-roulette = "Rou1svrgkcuo1rBNkP1XaESrD9xRpukx2uLY5MsgK14"
 
-[programs.localnet]
-program-roulette = "4oMFMMUBuACjVW9DPbEbgPhaT4XFqHTTP43EjFqfugqb"
+[programs.mainnet]
+program-roulette = "Rou1svrgkcuo1rBNkP1XaESrD9xRpukx2uLY5MsgK14"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "devnet"
+cluster = "mainnet"
 wallet = "~/.config/solana/id.json"
 skip_program_id_check = true
 
