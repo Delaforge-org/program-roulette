@@ -11,6 +11,17 @@ pub mod state;
 use instructions::*;
 use state::Bet; // Needed for the place_bet function signature
 
+#[cfg(not(feature = "no-entrypoint"))]
+solana_security_txt::security_txt! {
+    name: "0xRoulette Program",
+    project_url: "https://0xRoulette.com	",
+    contacts: "link:https://delaforge.org/bounty/program-roulette",
+    policy: "https://docs.delaforge.org/roulette",
+    source_code: "https://github.com/Delaforge-org/program-roulette",
+    auditors: "https://docs.delaforge.org/roulette_audit"
+}
+
+
 declare_id!("Rou1svrgkcuo1rBNkP1XaESrD9xRpukx2uLY5MsgK14");
 
 #[program]

@@ -8,10 +8,11 @@ pub const CREATE_VAULT_FEE_SOL_LAMPORTS: u64 = 537_000_000;
 pub const MAX_BETS_PER_ROUND: usize = 10; // Example limit for space calculation
 
 
-/// Divisor for calculating liquidity provider rewards (~1.1%).
-pub const PROVIDER_DIVISOR: u64 = 62;
-/// Divisor for calculating program owner revenue (~1.6%).
-pub const OWNER_DIVISOR: u64 = 91;
+/// Divisor for calculating liquidity provider rewards (~1.4%).
+pub const PROVIDER_DIVISOR: u64 = 71;
+
+/// Divisor for calculating program owner revenue (~0.8%).
+pub const OWNER_DIVISOR: u64 = 125;
 /// Precision for calculating provider rewards index.
 pub const REWARD_PRECISION: u128 = 1_000_000_000_000;
 
