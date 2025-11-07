@@ -1067,6 +1067,7 @@ dependencies = [
  "bytemuck_derive",
  "hex",
  "sha2 0.10.9",
+ "solana-security-txt",
 ]
 
 [[package]]
