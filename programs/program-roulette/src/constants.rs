@@ -4,9 +4,7 @@ pub const TREASURY_PUBKEY: Pubkey = pubkey!("DELAFDnkiiqu9amML7drYNLmcVALXboRQ2y
 pub const GAME_ADMIN_PUBKEY: Pubkey = pubkey!("RBAd8hvSpJMtBu5o2BJytCBvy9wy6UKJvebDf7wRw7A");
 pub const CREATE_VAULT_FEE_SOL_LAMPORTS: u64 = 537_000_000;
 
-
 pub const MAX_BETS_PER_ROUND: usize = 8; // Example limit for space calculation
-
 
 /// Divisor for calculating liquidity provider rewards (~1.4%).
 pub const PROVIDER_DIVISOR: u64 = 71;
