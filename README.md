@@ -31,8 +31,8 @@ The contract uses a scalable, two-tier account system for managing liquidity, en
 -   The contract automatically takes a commission from each bet.
 -   This commission is distributed between:
     -   **Liquidity Providers**: ~1.4% of each bet (1/71) as rewards for provided capital.
-    -   **Program Owner**: ~1.1% of each bet (1/91) as protocol revenue.
--   The remaining amount (~97.5%) forms a **payout reserve** used to pay winners.
+    -   **Program Owner**: ~0.8% of each bet (1/125) as protocol revenue.
+-   The remaining amount (~97.8%) forms a **payout reserve** used to pay winners.
 -   The program owner can periodically call `distribute_payout_reserve` to distribute 50% of accumulated reserves equally between providers (25%) and owner (25%).
 
 ### 4. Random Number Generation
@@ -50,8 +50,7 @@ The winning number (from 0 to 36) is determined randomly on the blockchain. The 
 -   `VaultAccount`: Stores global data for a liquidity pool of a specific SPL token, such as total liquidity and reward calculation indexes.
 -   `ProviderState`: A dedicated account for each liquidity provider within a specific vault. It tracks the amount of capital provided by that user and their unclaimed rewards. It's created on the first deposit and closed on full withdrawal.
 -   `GameSession`: A global account that manages the state and lifecycle of game rounds.
--   `PlayerBets`: An account created for each player to store their bets for the current round.
--   `ClaimRecord`: A small account created for each player-round combination to prevent double-claiming of winnings. Ensures each player can claim their winnings only once per round.
+-   `PlayerBets`: An account created for each player to store their bets for the current round. It also tracks the `claimed_round` to prevent double-claiming of winnings.
 
 ## 📜 Contract Instructions
 
