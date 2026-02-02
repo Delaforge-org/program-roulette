@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Token, TokenAccount, Transfer};
+use anchor_spl::token_interface::{self, TokenAccount, TokenInterface, TransferChecked, Mint};
 use crate::{
     constants::*,
     errors::RouletteError,
@@ -123,13 +123,15 @@ pub fn place_bet(ctx: Context<PlaceBets>, bet: Bet) -> Result<()> {
     // Transfer bet amount
     let bet_amount = bet.amount;
     require!(bet_amount > 0, RouletteError::InvalidBet); // Bet amount cannot be zero
-    token::transfer(
-        CpiContext::new(ctx.accounts.token_program.to_account_info(), Transfer {
+    token_interface::transfer_checked(
+        CpiContext::new(ctx.accounts.token_program.to_account_info(), TransferChecked {
             from: ctx.accounts.player_token_account.to_account_info(),
+            mint: ctx.accounts.token_mint.to_account_info(),
             to: ctx.accounts.vault_token_account.to_account_info(),
             authority: player.to_account_info(),
         }),
-        bet_amount
+        bet_amount,
+        ctx.accounts.token_mint.decimals,
     )?;
 
     // Update vault liquidity
@@ -202,7 +204,11 @@ pub struct PlaceBets<'info> {
     )]
     pub player_bets: Account<'info, PlayerBets>,
 
-    pub token_program: Program<'info, Token>,
+    /// The mint of the token. Needed for transfer_checked and decimals.
+    #[account(address = vault.token_mint @ RouletteError::InvalidTokenAccount)]
+    pub token_mint: InterfaceAccount<'info, Mint>,
+
+    pub token_program: Interface<'info, TokenInterface>,
 }
 
 // =================================================================================================
@@ -285,17 +291,19 @@ pub fn claim_my_winnings(ctx: Context<ClaimMyWinnings>, round_to_claim: u64) -> 
 
     let seeds = &[b"vault".as_ref(), vault.token_mint.as_ref(), &[vault.bump]];
     let signer_seeds = &[&seeds[..]];
-    token::transfer(
+    token_interface::transfer_checked(
         CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
-            Transfer {
+            TransferChecked {
                 from: vault_token_account_info.to_account_info(),
+                mint: ctx.accounts.token_mint.to_account_info(),
                 to: player_token_account_info.to_account_info(),
                 authority: vault.to_account_info(),
             },
             signer_seeds
         ),
-        actual_payout
+        actual_payout,
+        ctx.accounts.token_mint.decimals,
     )?;
 
     vault.total_liquidity = vault.total_liquidity
@@ -346,5 +354,9 @@ pub struct ClaimMyWinnings<'info> {
     #[account(mut)]
     pub player_token_account: AccountInfo<'info>,
 
-    pub token_program: Program<'info, Token>,
+    /// The mint of the token. Needed for transfer_checked and decimals.
+    #[account(address = vault.token_mint @ RouletteError::InvalidTokenAccount)]
+    pub token_mint: InterfaceAccount<'info, Mint>,
+
+    pub token_program: Interface<'info, TokenInterface>,
 }

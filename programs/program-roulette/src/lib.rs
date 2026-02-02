@@ -13,12 +13,12 @@ use state::Bet; // Needed for the place_bet function signature
 
 #[cfg(not(feature = "no-entrypoint"))]
 solana_security_txt::security_txt! {
-    name: "0xRoulette Program",
+    name: "0xRoulette Protocol",
     project_url: "https://0xRoulette.com	",
-    contacts: "https://delaforge.org/bounty/program-roulette",
-    policy: "https://docs.delaforge.org/roulette",
+    contacts: "https://0xroulette.com/bounty",
+    policy: "https://docs.0xroulette.com/policy",
     source_code: "https://github.com/Delaforge-org/program-roulette",
-    auditors: "https://docs.delaforge.org/roulette_audit"
+    auditors: "https://docs.0xroulette.com/roulette_audit"
 }
 
 

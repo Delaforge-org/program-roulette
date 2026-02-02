@@ -1,8 +1,8 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::program::set_return_data;
 use anchor_lang::system_program;
-use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer, SetAuthority};
-use anchor_spl::token::spl_token::instruction::AuthorityType;
+use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface, SetAuthority, TransferChecked};
+use anchor_spl::token_2022::spl_token_2022::instruction::AuthorityType;
 use crate::{
     constants::*,
     errors::RouletteError,
@@ -48,17 +48,19 @@ pub fn initialize_and_provide_liquidity(
     provider_state.bump = ctx.bumps.provider_state;
 
     // Transfer initial liquidity
-    token::transfer(
-        CpiContext::new(ctx.accounts.token_program.to_account_info(), Transfer {
+    token_interface::transfer_checked(
+        CpiContext::new(ctx.accounts.token_program.to_account_info(), TransferChecked {
             from: ctx.accounts.provider_token_account.to_account_info(),
+            mint: ctx.accounts.token_mint.to_account_info(),
             to: ctx.accounts.vault_token_account.to_account_info(),
             authority: ctx.accounts.liquidity_provider.to_account_info(),
         }),
-        amount
+        amount,
+        ctx.accounts.token_mint.decimals,
     )?;
 
     // Transfer ownership of the vault token account to the vault PDA
-    token::set_authority(
+    token_interface::set_authority(
         CpiContext::new(
             ctx.accounts.token_program.to_account_info(),
             SetAuthority {
@@ -88,7 +90,7 @@ pub fn initialize_and_provide_liquidity(
 #[derive(Accounts)]
 pub struct InitializeAndProvideLiquidity<'info> {
     /// The mint account of the SPL token for the new vault.
-    pub token_mint: Account<'info, Mint>,
+    pub token_mint: InterfaceAccount<'info, Mint>,
 
     /// The `VaultAccount` PDA to be initialized.
     /// Seeds: [b"vault", token_mint_key]
@@ -116,7 +118,7 @@ pub struct InitializeAndProvideLiquidity<'info> {
         mut,
         constraint = provider_token_account.mint == token_mint.key() @ RouletteError::InvalidTokenAccount
     )]
-    pub provider_token_account: Account<'info, TokenAccount>,
+    pub provider_token_account: InterfaceAccount<'info, TokenAccount>,
 
     /// The token account that will become the vault's token account.
     /// It must also be for the same mint.
@@ -125,7 +127,7 @@ pub struct InitializeAndProvideLiquidity<'info> {
         constraint = vault_token_account.mint == token_mint.key() @ RouletteError::InvalidTokenAccount,
         constraint = vault_token_account.key() != provider_token_account.key() @ RouletteError::DuplicateTokenAccount
     )]
-    pub vault_token_account: Account<'info, TokenAccount>,
+    pub vault_token_account: InterfaceAccount<'info, TokenAccount>,
 
     /// The initial liquidity provider (signer). Pays for account creation.
     #[account(mut)]
@@ -141,7 +143,7 @@ pub struct InitializeAndProvideLiquidity<'info> {
     /// The Solana System Program.
     pub system_program: Program<'info, System>,
     /// The SPL Token Program.
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
     /// The Rent Sysvar.
     pub rent: Sysvar<'info, Rent>,
 }
@@ -170,13 +172,15 @@ pub fn provide_liquidity(ctx: Context<ProvideLiquidity>, amount: u64) -> Result<
     // --- End of reward update logic ---
 
     // Transfer liquidity
-    token::transfer(
-        CpiContext::new(ctx.accounts.token_program.to_account_info(), Transfer {
+    token_interface::transfer_checked(
+        CpiContext::new(ctx.accounts.token_program.to_account_info(), TransferChecked {
             from: ctx.accounts.provider_token_account.to_account_info(),
+            mint: ctx.accounts.token_mint.to_account_info(),
             to: ctx.accounts.vault_token_account.to_account_info(),
             authority: ctx.accounts.liquidity_provider.to_account_info(),
         }),
-        amount
+        amount,
+        ctx.accounts.token_mint.decimals,
     )?;
 
     // If the provider state account is being initialized, set its fixed data.
@@ -224,7 +228,7 @@ pub struct ProvideLiquidity<'info> {
     pub vault: Account<'info, VaultAccount>,
 
     /// The mint account for the token being deposited
-    pub token_mint: Account<'info, Mint>,
+    pub token_mint: InterfaceAccount<'info, Mint>,
 
     /// The user's state account for this vault. Created if it doesn't exist.
     #[account(
@@ -241,7 +245,7 @@ pub struct ProvideLiquidity<'info> {
         mut,
         constraint = provider_token_account.mint == token_mint.key() @ RouletteError::InvalidTokenAccount
     )]
-    pub provider_token_account: Account<'info, TokenAccount>,
+    pub provider_token_account: InterfaceAccount<'info, TokenAccount>,
 
     /// The vault's token account. Constraint ensures it matches the vault's stored `token_account`.
     #[account(
@@ -250,14 +254,14 @@ pub struct ProvideLiquidity<'info> {
         constraint = vault_token_account.mint == token_mint.key() @ RouletteError::InvalidTokenAccount,
         constraint = vault_token_account.key() != provider_token_account.key() @ RouletteError::DuplicateTokenAccount
     )]
-    pub vault_token_account: Account<'info, TokenAccount>,
+    pub vault_token_account: InterfaceAccount<'info, TokenAccount>,
 
     /// The liquidity provider (signer).
     #[account(mut)]
     pub liquidity_provider: Signer<'info>,
 
     /// The SPL Token Program, needed for the token transfer CPI.
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
     /// The Solana System Program.
     pub system_program: Program<'info, System>,
 }
@@ -293,17 +297,19 @@ pub fn withdraw_liquidity(ctx: Context<WithdrawLiquidity>) -> Result<()> {
         // Transfer tokens back to provider
         let seeds = &[b"vault".as_ref(), vault.token_mint.as_ref(), &[vault.bump]];
         let signer_seeds = &[&seeds[..]];
-        token::transfer(
+        token_interface::transfer_checked(
             CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
-                Transfer {
+                TransferChecked {
                     from: ctx.accounts.vault_token_account.to_account_info(),
+                    mint: ctx.accounts.token_mint.to_account_info(),
                     to: ctx.accounts.provider_token_account.to_account_info(),
                     authority: vault.to_account_info(),
                 },
                 signer_seeds
             ),
-            total_withdrawal_amount
+            total_withdrawal_amount,
+            ctx.accounts.token_mint.decimals,
         )?;
 
         // Update vault global state
@@ -353,7 +359,7 @@ pub struct WithdrawLiquidity<'info> {
     pub provider_state: Account<'info, ProviderState>,
 
     /// The mint account for the token.
-    pub token_mint: Account<'info, Mint>,
+    pub token_mint: InterfaceAccount<'info, Mint>,
 
     /// The provider's token account to receive the funds.
     #[account(
@@ -361,7 +367,7 @@ pub struct WithdrawLiquidity<'info> {
         constraint = provider_token_account.mint == token_mint.key() @ RouletteError::InvalidTokenAccount,
         constraint = provider_token_account.key() != vault_token_account.key() @ RouletteError::DuplicateTokenAccount
     )]
-    pub provider_token_account: Account<'info, TokenAccount>,
+    pub provider_token_account: InterfaceAccount<'info, TokenAccount>,
 
     /// The vault's token account.
     #[account(
@@ -369,14 +375,14 @@ pub struct WithdrawLiquidity<'info> {
         constraint = vault_token_account.key() == vault.token_account @ RouletteError::VaultMismatch,
         constraint = vault_token_account.mint == token_mint.key() @ RouletteError::InvalidTokenAccount
     )]
-    pub vault_token_account: Account<'info, TokenAccount>,
+    pub vault_token_account: InterfaceAccount<'info, TokenAccount>,
 
     /// The liquidity provider requesting the withdrawal (signer).
     #[account(mut)]
     pub liquidity_provider: Signer<'info>,
 
     /// The SPL Token Program, needed for the token transfer CPI.
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
 }
 
 // =================================================================================================
@@ -406,17 +412,19 @@ pub fn withdraw_provider_revenue(ctx: Context<WithdrawProviderRevenue>) -> Resul
     // Transfer rewards to the provider
     let seeds = &[b"vault".as_ref(), vault.token_mint.as_ref(), &[vault.bump]];
     let signer_seeds = &[&seeds[..]];
-    token::transfer(
+    token_interface::transfer_checked(
         CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
-            Transfer {
+            TransferChecked {
                 from: ctx.accounts.vault_token_account.to_account_info(),
+                mint: ctx.accounts.token_mint.to_account_info(),
                 to: ctx.accounts.provider_token_account.to_account_info(),
                 authority: vault.to_account_info(),
             },
             signer_seeds
         ),
-        total_rewards_to_claim
+        total_rewards_to_claim,
+        ctx.accounts.token_mint.decimals,
     )?;
 
     // Update vault global state
@@ -461,7 +469,7 @@ pub struct WithdrawProviderRevenue<'info> {
     pub provider_state: Account<'info, ProviderState>,
 
     /// The mint account for the token being withdrawn
-    pub token_mint: Account<'info, Mint>,
+    pub token_mint: InterfaceAccount<'info, Mint>,
 
     /// The provider's token account to receive rewards.
     #[account(
@@ -469,7 +477,7 @@ pub struct WithdrawProviderRevenue<'info> {
         constraint = provider_token_account.mint == token_mint.key() @ RouletteError::InvalidTokenAccount,
         constraint = provider_token_account.key() != vault_token_account.key() @ RouletteError::DuplicateTokenAccount
     )]
-    pub provider_token_account: Account<'info, TokenAccount>,
+    pub provider_token_account: InterfaceAccount<'info, TokenAccount>,
 
     /// The vault's token account.
     #[account(
@@ -477,14 +485,14 @@ pub struct WithdrawProviderRevenue<'info> {
         constraint = vault_token_account.key() == vault.token_account @ RouletteError::VaultMismatch,
         constraint = vault_token_account.mint == token_mint.key() @ RouletteError::InvalidTokenAccount
     )]
-    pub vault_token_account: Account<'info, TokenAccount>,
+    pub vault_token_account: InterfaceAccount<'info, TokenAccount>,
 
     /// The liquidity provider requesting the withdrawal (signer).
     #[account(mut)]
     pub liquidity_provider: Signer<'info>,
 
     /// The SPL Token Program, needed for the token transfer CPI.
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
 }
 
 // =================================================================================================
@@ -502,17 +510,19 @@ pub fn withdraw_owner_revenue(ctx: Context<WithdrawOwnerRevenue>) -> Result<()> 
     let seeds = &[b"vault".as_ref(), vault.token_mint.as_ref(), &[vault.bump]];
     let signer_seeds = &[&seeds[..]];
 
-    token::transfer(
+    token_interface::transfer_checked(
         CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
-            Transfer {
+            TransferChecked {
                 from: ctx.accounts.vault_token_account.to_account_info(),
+                mint: ctx.accounts.token_mint.to_account_info(),
                 to: ctx.accounts.owner_treasury_token_account.to_account_info(),
                 authority: vault.to_account_info(),
             },
             signer_seeds
         ),
-        reward_amount
+        reward_amount,
+        ctx.accounts.token_mint.decimals,
     )?;
 
     vault.total_liquidity = vault.total_liquidity
@@ -545,7 +555,7 @@ pub struct WithdrawOwnerRevenue<'info> {
     pub vault: Account<'info, VaultAccount>,
 
     /// The mint account for the token being withdrawn
-    pub token_mint: Account<'info, Mint>,
+    pub token_mint: InterfaceAccount<'info, Mint>,
 
     /// The treasury's token account to receive the funds.
     #[account(
@@ -553,7 +563,7 @@ pub struct WithdrawOwnerRevenue<'info> {
         constraint = owner_treasury_token_account.mint == token_mint.key() @ RouletteError::TreasuryAccountMintMismatch,
         constraint = owner_treasury_token_account.owner == TREASURY_PUBKEY @ RouletteError::InvalidTreasuryAccountOwner
     )]
-    pub owner_treasury_token_account: Account<'info, TokenAccount>,
+    pub owner_treasury_token_account: InterfaceAccount<'info, TokenAccount>,
 
     /// The vault's token account.
     #[account(
@@ -561,10 +571,10 @@ pub struct WithdrawOwnerRevenue<'info> {
         constraint = vault_token_account.key() == vault.token_account @ RouletteError::VaultMismatch,
         constraint = vault_token_account.mint == token_mint.key() @ RouletteError::InvalidTokenAccount
     )]
-    pub vault_token_account: Account<'info, TokenAccount>,
+    pub vault_token_account: InterfaceAccount<'info, TokenAccount>,
 
     /// The SPL Token Program, needed for the token transfer CPI.
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
 }
 
 // =================================================================================================
@@ -645,7 +655,7 @@ pub struct DistributePayoutReserve<'info> {
     pub vault: Account<'info, VaultAccount>,
 
     /// The mint account for the token.
-    pub token_mint: Account<'info, Mint>,
+    pub token_mint: InterfaceAccount<'info, Mint>,
 }
 
 // =================================================================================================
@@ -689,7 +699,7 @@ pub struct GetUnclaimedRewards<'info> {
     pub provider_state: Account<'info, ProviderState>,
     
     /// The mint account for the token.
-    pub token_mint: Account<'info, Mint>,
+    pub token_mint: InterfaceAccount<'info, Mint>,
 
     /// CHECK: The provider's wallet account. No signature is required as this is a read-only function.
     /// It's used solely for deriving the `provider_state` PDA and no data is read from it.
