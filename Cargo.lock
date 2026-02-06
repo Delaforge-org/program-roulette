@@ -3,6 +3,18 @@
 version = 4
 
 [[package]]
+name = "Roulette-Protocol"
+version = "0.1.5"
+dependencies = [
+ "anchor-lang",
+ "anchor-spl",
+ "bytemuck_derive",
+ "hex",
+ "sha2 0.10.9",
+ "solana-security-txt",
+]
+
+[[package]]
 name = "aead"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1056,18 +1068,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "02b3e5e68a3a1a02aad3ec490a98007cbc13c37cbe84a3cd7b8e406d76e7f778"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "program-roulette"
-version = "0.1.4"
-dependencies = [
- "anchor-lang",
- "anchor-spl",
- "bytemuck_derive",
- "hex",
- "sha2 0.10.9",
- "solana-security-txt",
 ]
 
 [[package]]

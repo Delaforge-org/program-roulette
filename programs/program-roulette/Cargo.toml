@@ -1,7 +1,7 @@
 [package]
-name = "program-roulette"
-version = "0.1.4"
-description = "Created with Anchor"
+name = "Roulette-Protocol"
+version = "0.1.5"
+description = "Decentralized Roulette Protocol on Solana"
 edition = "2021"
 
 [lib]
